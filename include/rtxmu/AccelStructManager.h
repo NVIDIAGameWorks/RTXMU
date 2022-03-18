@@ -37,12 +37,13 @@ namespace rtxmu
     constexpr uint32_t BlockAlignment                       = 65536;
     constexpr uint32_t AccelStructAlignment                 = 256;
     constexpr uint64_t CompactionSizeSuballocationBlockSize = 65536;
-    constexpr uint64_t DefaultSuballocatorBlockSize         = 65536;
+    constexpr uint64_t DefaultSuballocatorBlockSize         = 8388608;
 
     struct AccelerationStructure
     {
         uint64_t compactionSize  = 0;
         uint64_t resultSize      = 0;
+        uint64_t scratchSize     = 0;
         bool isCompacted         = false;
         bool requestedCompaction = false;
         bool readyToFree         = false;

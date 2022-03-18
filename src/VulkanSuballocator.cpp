@@ -24,8 +24,83 @@
 
 namespace rtxmu
 {
-   vk::Device VkBlock::m_device;
-   vk::PhysicalDevice VkBlock::m_physicalDevice;
-   vk::DispatchLoaderDynamic VkBlock::m_dispatchLoader;
-   vk::Instance  VkBlock::m_instance;
+    vk::DispatchLoaderDynamic VkBlock::m_dispatchLoader;
+
+    vk::DispatchLoaderDynamic& VkBlock::getDispatchLoader()
+    {
+        return m_dispatchLoader;
+    }
+
+    uint32_t VkBlock::getMemoryIndex(const vk::PhysicalDevice& physicalDevice,
+                                     uint32_t memoryTypeBits,
+                                     vk::MemoryPropertyFlags propFlags,
+                                     vk::MemoryHeapFlags heapFlags)
+    {
+        vk::PhysicalDeviceMemoryProperties memProperties;
+        physicalDevice.getMemoryProperties(&memProperties, m_dispatchLoader);
+
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+        {
+            vk::MemoryType* memoryType = &memProperties.memoryTypes[i];
+            if ((memoryTypeBits & (1 << i)) &&
+                (memoryType->propertyFlags & propFlags) &&
+                (memProperties.memoryHeaps[memoryType->heapIndex].flags & heapFlags))
+            {
+                return i;
+
+            }
+        }
+        return 0;
+    }
+
+    vk::DeviceMemory VkBlock::getMemory(VkBlock block)
+    {
+        return block.m_memory;
+    }
+
+    vk::DeviceAddress VkBlock::getDeviceAddress(const vk::Device& device,
+                                               VkBlock block,
+                                               uint64_t offset)
+    {
+        auto addrInfo = vk::BufferDeviceAddressInfo().setBuffer(block.m_buffer);
+
+        return device.getBufferAddress(addrInfo, VkBlock::getDispatchLoader()) + offset;
+    }
+
+    vk::Buffer VkBlock::getBuffer()
+    {
+        return m_buffer;
+    }
+
+    void VkBlock::allocate(Allocator*              allocator,
+                           vk::DeviceSize          size,
+                           vk::BufferUsageFlags    usageFlags,
+                           vk::MemoryPropertyFlags propFlags,
+                           vk::MemoryHeapFlags     heapflags)
+    {
+        auto bufferInfo = vk::BufferCreateInfo()
+            .setSize(size)
+            .setUsage(usageFlags)
+            .setSharingMode(vk::SharingMode::eExclusive);
+
+        m_buffer = allocator->device.createBuffer(bufferInfo, nullptr, VkBlock::getDispatchLoader());
+
+        vk::MemoryRequirements memoryRequirements = allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
+        uint32_t memoryTypeIndex = getMemoryIndex(allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
+
+        auto memoryInfo = vk::MemoryAllocateInfo()
+            .setAllocationSize(size)
+            .setMemoryTypeIndex(memoryTypeIndex);
+
+        m_memory = allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
+        allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
+    }
+
+    void VkBlock::free(Allocator* allocator)
+    {
+        allocator->device.destroyBuffer(m_buffer, nullptr, VkBlock::getDispatchLoader());
+        allocator->device.freeMemory(m_memory, nullptr, VkBlock::getDispatchLoader());
+    }
+
+    uint64_t VkBlock::getVMA() { return (uint64_t)(VkDeviceMemory)(m_memory); }
 }

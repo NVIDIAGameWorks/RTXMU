@@ -29,18 +29,18 @@ namespace rtxmu
 {
     struct VkAccelerationStructure : AccelerationStructure
     {
-        Suballocator<VkScratchBlock>::SubAllocation updateGpuMemory;
-        Suballocator<VkScratchBlock>::SubAllocation scratchGpuMemory;
-        Suballocator<VkAccelStructBlock>::SubAllocation resultGpuMemory;
-        Suballocator<VkAccelStructBlock>::SubAllocation compactionGpuMemory;
-        Suballocator<VkQueryBlock>::SubAllocation queryCompactionSizeMemory;
+        Suballocator<Allocator, VkScratchBlock>::SubAllocation updateGpuMemory;
+        Suballocator<Allocator, VkScratchBlock>::SubAllocation scratchGpuMemory;
+        Suballocator<Allocator, VkAccelStructBlock>::SubAllocation resultGpuMemory;
+        Suballocator<Allocator, VkAccelStructBlock>::SubAllocation compactionGpuMemory;
+        Suballocator<Allocator, VkQueryBlock>::SubAllocation queryCompactionSizeMemory;
     };
 
     class VkAccelStructManager : public AccelStructManager<VkAccelerationStructure>
     {
     public:
 
-        VkAccelStructManager(vk::Instance instance, vk::Device device, vk::PhysicalDevice physicalDevice);
+        VkAccelStructManager(const vk::Instance& instance, const vk::Device& device, const vk::PhysicalDevice& physicalDevice);
         
         // Initializes suballocator block size
         void Initialize(uint32_t suballocatorBlockSize = DefaultSuballocatorBlockSize);
@@ -100,10 +100,13 @@ namespace rtxmu
 
         void ReleaseAccelerationStructures(const uint64_t accelStructId);
 
+        Allocator m_allocator;
+
         // Suballocation buffers
-        std::unique_ptr<Suballocator<VkScratchBlock>>     m_scratchPool;
-        std::unique_ptr<Suballocator<VkAccelStructBlock>> m_resultPool;
-        std::unique_ptr<Suballocator<VkAccelStructBlock>> m_compactionPool;
-        std::unique_ptr<Suballocator<VkQueryBlock>>       m_queryCompactionSizePool;
+        std::unique_ptr<Suballocator<Allocator, VkScratchBlock>>     m_scratchPool;
+        std::unique_ptr<Suballocator<Allocator, VkScratchBlock>>     m_updatePool;
+        std::unique_ptr<Suballocator<Allocator, VkAccelStructBlock>> m_resultPool;
+        std::unique_ptr<Suballocator<Allocator, VkAccelStructBlock>> m_compactionPool;
+        std::unique_ptr<Suballocator<Allocator, VkQueryBlock>>       m_queryCompactionSizePool;
     };
 }

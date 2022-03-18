@@ -30,79 +30,45 @@ namespace rtxmu
 {
     constexpr uint32_t DefaultBlockAlignment = 65536;
 
+    struct Allocator
+    {
+        vk::Instance       instance;
+        vk::Device         device;
+        vk::PhysicalDevice physicalDevice;
+    };
+
     class VkBlock
     {
     public:
-        static vk::DispatchLoaderDynamic  m_dispatchLoader;
-        static vk::Instance               m_instance;
-        static vk::Device                 m_device;
-        static vk::PhysicalDevice         m_physicalDevice;
-        vk::DeviceMemory                  m_memory = nullptr;
-        vk::Buffer                        m_buffer = nullptr;
+        static vk::DispatchLoaderDynamic& getDispatchLoader();
 
-        static uint32_t getMemoryIndex(uint32_t memoryTypeBits, vk::MemoryPropertyFlags propFlags, vk::MemoryHeapFlags heapFlags)
-        {
-            vk::PhysicalDeviceMemoryProperties memProperties;
-            m_physicalDevice.getMemoryProperties(&memProperties, m_dispatchLoader);
+        static uint32_t getMemoryIndex(const vk::PhysicalDevice& physicalDevice,
+                                       uint32_t memoryTypeBits,
+                                       vk::MemoryPropertyFlags propFlags,
+                                       vk::MemoryHeapFlags heapFlags);
 
-            for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-            {
-                vk::MemoryType* memoryType = &memProperties.memoryTypes[i];
-                if ((memoryTypeBits & (1 << i)) &&
-                    (memoryType->propertyFlags & propFlags) &&
-                    (memProperties.memoryHeaps[memoryType->heapIndex].flags & heapFlags))
-                {
-                    return i;
+        static vk::DeviceMemory getMemory(VkBlock block);
 
-                }
-            }
-            return 0;
-        }
+        static vk::DeviceAddress getDeviceAddress(const vk::Device& device,
+                                                  VkBlock block,
+                                                  uint64_t offset);
 
-        static vk::DeviceMemory getMemory(VkBlock block)
-        {
-            return block.m_memory;
-        }
+        void allocate(Allocator*              allocator,
+                      vk::DeviceSize          size,
+                      vk::BufferUsageFlags    usageFlags,
+                      vk::MemoryPropertyFlags propFlags,
+                      vk::MemoryHeapFlags     heapflags);
 
-        static vk::DeviceAddress getDeviceAddress(VkBlock block, uint64_t offset)
-        {
-            auto addrInfo = vk::BufferDeviceAddressInfo()
-                .setBuffer(block.m_buffer);
+        void free(Allocator* allocator);
 
-            return VkBlock::m_device.getBufferAddress(addrInfo) + offset;
-        }
+        uint64_t getVMA();
 
-        void allocate(vk::DeviceSize             size,
-            vk::BufferUsageFlags       usageFlags,
-            vk::MemoryPropertyFlags    propFlags,
-            vk::MemoryHeapFlags        heapflags)
-        {
-            auto bufferInfo = vk::BufferCreateInfo()
-                .setSize(size)
-                .setUsage(usageFlags)
-                .setSharingMode(vk::SharingMode::eExclusive);
+        vk::Buffer getBuffer();
 
-            m_buffer = m_device.createBuffer(bufferInfo);
-
-            vk::MemoryRequirements memoryRequirements = m_device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
-            uint32_t memoryTypeIndex = getMemoryIndex(memoryRequirements.memoryTypeBits, propFlags, heapflags);
-
-
-            auto memoryInfo = vk::MemoryAllocateInfo()
-                .setAllocationSize(size)
-                .setMemoryTypeIndex(memoryTypeIndex);
-
-            m_memory = m_device.allocateMemory(memoryInfo);
-            m_device.bindBufferMemory(m_buffer, m_memory, 0);
-        }
-
-        void free()
-        {
-            m_device.destroyBuffer(m_buffer);
-            m_device.freeMemory(m_memory);
-        }
-
-        uint64_t getVMA() { return (uint64_t)(VkDeviceMemory)(m_memory); }
+    private:
+        static vk::DispatchLoaderDynamic m_dispatchLoader;
+        vk::DeviceMemory                 m_memory = nullptr;
+        vk::Buffer                       m_buffer = nullptr;
     };
 
     class VkScratchBlock : public VkBlock
@@ -115,9 +81,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(vk::DeviceSize size)
+        void allocate(Allocator* allocator, vk::DeviceSize size)
         {
-            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags);
+            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags);
         }
     };
 
@@ -133,9 +99,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(vk::DeviceSize size)
+        void allocate(Allocator* allocator, vk::DeviceSize size)
         {
-            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags);
+            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags);
         }
     };
 
@@ -149,9 +115,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(vk::DeviceSize size)
+        void allocate(Allocator* allocator, vk::DeviceSize size)
         {
-            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags);
+            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags);
         }
     };
 
@@ -165,9 +131,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(vk::DeviceSize size)
+        void allocate(Allocator* allocator, vk::DeviceSize size)
         {
-            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags);
+            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags);
         }
     };
 
@@ -179,18 +145,21 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(vk::DeviceSize size)
+        void allocate(Allocator* allocator, vk::DeviceSize size)
         {
             auto queryPoolInfo = vk::QueryPoolCreateInfo()
                 .setQueryType(vk::QueryType::eAccelerationStructureCompactedSizeKHR)
                 .setQueryCount((uint32_t)size);
-            queryPool = VkBlock::m_device.createQueryPool(queryPoolInfo, nullptr, m_dispatchLoader);
+
+            queryPool = allocator->device.createQueryPool(queryPoolInfo, nullptr, VkBlock::getDispatchLoader());
         }
 
-        void free()
+        void free(Allocator* allocator)
         {
             if (queryPool)
-                VkBlock::m_device.destroyQueryPool(queryPool, nullptr, m_dispatchLoader);
+            {
+                allocator->device.destroyQueryPool(queryPool, nullptr, VkBlock::getDispatchLoader());
+            }
         }
     };
 }

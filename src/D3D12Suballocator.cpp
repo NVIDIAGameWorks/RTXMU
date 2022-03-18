@@ -24,5 +24,91 @@
 
 namespace rtxmu
 {
-    ID3D12Device5* D3D12Block::m_device = nullptr;
+        D3D12_GPU_VIRTUAL_ADDRESS D3D12Block::getGPUVA(D3D12Block block,
+                                                              uint64_t   offset)
+        {
+            D3D12_GPU_VIRTUAL_ADDRESS gpuVA = block.m_resource->GetGPUVirtualAddress() + offset;
+            return gpuVA;
+        }
+
+        ID3D12Resource* D3D12Block::getResource()
+        {
+            return m_resource;
+        }
+
+        void D3D12Block::allocate(ID3D12Device5*        device,
+                                  uint64_t              size,
+                                  D3D12_HEAP_TYPE       heapType,
+                                  D3D12_RESOURCE_STATES state,
+                                  uint32_t              alignment)
+        {
+            D3D12_RESOURCE_DESC desc = {};
+            desc.Dimension           = D3D12_RESOURCE_DIMENSION_BUFFER;
+            desc.Alignment           = 0;
+            desc.Width               = size;
+            desc.Height              = 1;
+            desc.DepthOrArraySize    = 1;
+            desc.MipLevels           = 1;
+            desc.Format              = DXGI_FORMAT_UNKNOWN;
+            desc.SampleDesc.Count    = 1;
+            desc.SampleDesc.Quality  = 0;
+            desc.Layout              = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+            if ((heapType != D3D12_HEAP_TYPE_READBACK) &&
+                (heapType != D3D12_HEAP_TYPE_UPLOAD))
+            {
+                desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            }
+            else
+            {
+                desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            }
+
+            D3D12_HEAP_PROPERTIES heapProperties = {};
+            heapProperties.Type                  = heapType;
+            heapProperties.MemoryPoolPreference  = D3D12_MEMORY_POOL_UNKNOWN;
+            heapProperties.CPUPageProperty       = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+            heapProperties.CreationNodeMask      = 1;
+            heapProperties.VisibleNodeMask       = 1;
+
+            if ((Use4MBAlignedPlacedResources == true) &&
+                (alignment == D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT))
+            {
+                ID3D12Heap*     heap     = nullptr;
+                D3D12_HEAP_DESC heapDesc = {};
+                heapDesc.SizeInBytes     = size;
+                heapDesc.Properties      = heapProperties;
+                heapDesc.Alignment       = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+                heapDesc.Flags           = D3D12_HEAP_FLAG_NONE;
+
+                device->CreateHeap(&heapDesc,
+                                   IID_PPV_ARGS(&heap));
+
+                device->CreatePlacedResource(heap,
+                                             0,
+                                             &desc,
+                                             state,
+                                             nullptr,
+                                             IID_PPV_ARGS(&m_resource));
+            }
+            else if (alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
+            {
+                device->CreateCommittedResource(&heapProperties,
+                                                D3D12_HEAP_FLAG_NONE,
+                                                &desc,
+                                                state,
+                                                nullptr,
+                                                IID_PPV_ARGS(&m_resource));
+            }
+        }
+
+        void D3D12Block::free(ID3D12Device5* device)
+        {
+            (void)device;
+
+            m_resource->Release();
+            m_resource = nullptr;
+        }
+
+        uint64_t D3D12Block::getVMA() { return static_cast<uint64_t>(m_resource->GetGPUVirtualAddress()); }
 }

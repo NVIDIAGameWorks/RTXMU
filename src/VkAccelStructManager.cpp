@@ -24,11 +24,11 @@
 
 namespace rtxmu
 {
-    VkAccelStructManager::VkAccelStructManager(vk::Instance instance, vk::Device device, vk::PhysicalDevice physicalDevice)
+    VkAccelStructManager::VkAccelStructManager(const vk::Instance& instance, const vk::Device& device, const vk::PhysicalDevice& physicalDevice)
     {
-        VkBlock::m_instance = instance;
-        VkBlock::m_device = device;
-        VkBlock::m_physicalDevice = physicalDevice;
+        m_allocator.instance = instance;
+        m_allocator.device = device;
+        m_allocator.physicalDevice = physicalDevice;
     }
     
     // Initializes suballocator block size
@@ -36,16 +36,17 @@ namespace rtxmu
     {
         m_suballocationBlockSize = suballocatorBlockSize;
 
-        m_scratchPool = std::make_unique<Suballocator<VkScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment);
-        m_resultPool = std::make_unique<Suballocator<VkAccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment);
-        m_compactionPool = std::make_unique<Suballocator<VkAccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment);
-        m_queryCompactionSizePool = std::make_unique<Suballocator<VkQueryBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor);
+        m_scratchPool = std::make_unique<Suballocator<Allocator, VkScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_updatePool = std::make_unique<Suballocator<Allocator, VkScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_resultPool = std::make_unique<Suballocator<Allocator, VkAccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_compactionPool = std::make_unique<Suballocator<Allocator, VkAccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_queryCompactionSizePool = std::make_unique<Suballocator<Allocator, VkQueryBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, &m_allocator);
 
         // Load dispatch table if not loaded
-        if (VkBlock::m_dispatchLoader.vkGetInstanceProcAddr == nullptr)
+        if (VkBlock::getDispatchLoader().vkGetInstanceProcAddr == nullptr)
         {
             const vk::DynamicLoader dl;
-            VkBlock::m_dispatchLoader.init(VkBlock::m_instance, VkBlock::m_device, dl);
+            VkBlock::getDispatchLoader().init(m_allocator.instance, m_allocator.device, dl);
         }
     }
 
@@ -53,6 +54,7 @@ namespace rtxmu
     void VkAccelStructManager::Reset()
     {
         m_scratchPool.reset();
+        m_updatePool.reset();
         m_resultPool.reset();
         m_compactionPool.reset();
         m_queryCompactionSizePool.reset();
@@ -78,7 +80,7 @@ namespace rtxmu
             if (geomInfo.flags & vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate &&
                 geomInfo.mode == vk::BuildAccelerationStructureModeKHR::eUpdate)
             {
-                geomInfo.scratchData.deviceAddress = VkBlock::getDeviceAddress(accelStruct->updateGpuMemory.block, accelStruct->updateGpuMemory.offset);
+                geomInfo.scratchData.deviceAddress = VkBlock::getDeviceAddress(m_allocator.device, accelStruct->updateGpuMemory.block, accelStruct->updateGpuMemory.offset);
 
                 geomInfo.dstAccelerationStructure = GetAccelerationStruct(asId);
                 geomInfo.srcAccelerationStructure = GetAccelerationStruct(asId);
@@ -88,11 +90,20 @@ namespace rtxmu
                 // Do not support rebuilds with compaction, not good practice
                 assert((geomInfo.flags & vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction) == vk::BuildAccelerationStructureFlagBitsKHR(0));
 
-                geomInfo.scratchData.deviceAddress = VkBlock::getDeviceAddress(accelStruct->scratchGpuMemory.block, accelStruct->scratchGpuMemory.offset);
+                // All scratch is discarded after the build is performed but if a recurring build happens
+                // then we need to reallocate
+                if ((accelStruct->scratchGpuMemory.subBlock == nullptr) ||
+                    (accelStruct->scratchGpuMemory.subBlock->isFree() == true))
+                {
+                    accelStruct->scratchGpuMemory =
+                        m_scratchPool->allocate(accelStruct->scratchGpuMemory.subBlock->getSize());
+                }
+
+                geomInfo.scratchData.deviceAddress = VkBlock::getDeviceAddress(m_allocator.device, accelStruct->scratchGpuMemory.block, accelStruct->scratchGpuMemory.offset);
                 geomInfo.dstAccelerationStructure = accelStruct->resultGpuMemory.block.m_asHandle;
             }
 
-            commandList.buildAccelerationStructuresKHR(1, &geomInfo, &rangeInfos[buildIndex], VkBlock::m_dispatchLoader);
+            commandList.buildAccelerationStructuresKHR(1, &geomInfo, &rangeInfos[buildIndex], VkBlock::getDispatchLoader());
         }
         m_threadSafeLock.unlock();
     }
@@ -118,33 +129,34 @@ namespace rtxmu
             accelStructIds.push_back(asId);
 
             auto buildSizeInfo = vk::AccelerationStructureBuildSizesInfoKHR();
-            VkBlock::m_device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, &geomInfos[buildIndex], maxPrimitiveCounts[buildIndex], &buildSizeInfo, VkBlock::m_dispatchLoader);
+            m_allocator.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, &geomInfos[buildIndex], maxPrimitiveCounts[buildIndex], &buildSizeInfo, VkBlock::getDispatchLoader());
 
             accelStruct->resultGpuMemory = m_resultPool->allocate(buildSizeInfo.accelerationStructureSize);
             accelStruct->scratchGpuMemory = m_scratchPool->allocate(buildSizeInfo.buildScratchSize);
+            accelStruct->scratchSize = accelStruct->scratchGpuMemory.subBlock->getSize();
             m_totalUncompactedMemory += accelStruct->resultGpuMemory.subBlock->getSize();
             accelStruct->resultSize = accelStruct->resultGpuMemory.subBlock->getSize();
 
             auto asCreateInfo = vk::AccelerationStructureCreateInfoKHR()
                 .setType(geomInfos->type)
                 .setSize(buildSizeInfo.accelerationStructureSize)
-                .setBuffer(accelStruct->resultGpuMemory.block.m_buffer)
+                .setBuffer(accelStruct->resultGpuMemory.block.getBuffer())
                 .setOffset(accelStruct->resultGpuMemory.offset);
 
-            auto asHandle = VkBlock::m_device.createAccelerationStructureKHR(asCreateInfo);
+            auto asHandle = m_allocator.device.createAccelerationStructureKHR(asCreateInfo, nullptr, VkBlock::getDispatchLoader());
             accelStruct->resultGpuMemory.block.m_asHandle = asHandle;
 
             if (geomInfos[buildIndex].flags & vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate)
             {
-                accelStruct->updateGpuMemory = m_scratchPool->allocate(buildSizeInfo.updateScratchSize);
+                accelStruct->updateGpuMemory = m_updatePool->allocate(buildSizeInfo.updateScratchSize);
             }
 
-            geomInfos[buildIndex].scratchData.deviceAddress = VkBlock::getDeviceAddress(accelStruct->scratchGpuMemory.block,
+            geomInfos[buildIndex].scratchData.deviceAddress = VkBlock::getDeviceAddress(m_allocator.device, accelStruct->scratchGpuMemory.block,
                 accelStruct->scratchGpuMemory.offset);
             geomInfos[buildIndex].dstAccelerationStructure = asHandle;
 
             //Can batch in one call, need to rehandle compact size queries
-            commandList.buildAccelerationStructuresKHR(1, &geomInfos[buildIndex], &rangeInfos[buildIndex], VkBlock::m_dispatchLoader);
+            commandList.buildAccelerationStructuresKHR(1, &geomInfos[buildIndex], &rangeInfos[buildIndex], VkBlock::getDispatchLoader());
 
             if (geomInfos[buildIndex].flags & vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction)
             {
@@ -162,22 +174,23 @@ namespace rtxmu
     {
         for (const uint64_t& asId : accelStructIds)
         {
-            if (m_asBufferBuildQueue[asId]->isCompacted == false)
-            {
-                // Barrier for compaction size query
-                auto barrier = vk::BufferMemoryBarrier()
-                    .setSrcAccessMask(vk::AccessFlagBits::eAccelerationStructureWriteKHR)
-                    .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR)
-                    .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                    .setBuffer(m_asBufferBuildQueue[asId]->resultGpuMemory.block.m_buffer)
-                    .setOffset(m_asBufferBuildQueue[asId]->resultGpuMemory.offset)
-                    .setSize(m_asBufferBuildQueue[asId]->resultGpuMemory.subBlock->getSize());
+            // Barrier for compaction size query
+            auto barrier = vk::BufferMemoryBarrier()
+                .setSrcAccessMask(vk::AccessFlagBits::eAccelerationStructureWriteKHR)
+                .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR)
+                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setBuffer(m_asBufferBuildQueue[asId]->isCompacted ?
+                    m_asBufferBuildQueue[asId]->compactionGpuMemory.block.getBuffer() :
+                    m_asBufferBuildQueue[asId]->resultGpuMemory.block.getBuffer())
+                .setOffset(m_asBufferBuildQueue[asId]->isCompacted ?
+                    m_asBufferBuildQueue[asId]->compactionGpuMemory.offset :
+                    m_asBufferBuildQueue[asId]->resultGpuMemory.offset)
+                .setSize(m_asBufferBuildQueue[asId]->resultGpuMemory.subBlock->getSize());
 
-                commandList.pipelineBarrier(vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
-                    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
-                    vk::DependencyFlags(), 0, nullptr, 1, &barrier, 0, nullptr, VkBlock::m_dispatchLoader);
-            }
+            commandList.pipelineBarrier(vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::DependencyFlags(), 0, nullptr, 1, &barrier, 0, nullptr, VkBlock::getDispatchLoader());
         }
     }
 
@@ -197,8 +210,8 @@ namespace rtxmu
                 vk::AccelerationStructureKHR asHandle = accelStruct->resultGpuMemory.block.m_asHandle;
 
                 // Need to batch builds/sychornization/compaction size writes
-                commandList.resetQueryPool(pool, queryIndex, 1, VkBlock::m_dispatchLoader);
-                commandList.writeAccelerationStructuresPropertiesKHR(1, &asHandle, vk::QueryType::eAccelerationStructureCompactedSizeKHR, pool, queryIndex, VkBlock::m_dispatchLoader);
+                commandList.resetQueryPool(pool, queryIndex, 1, VkBlock::getDispatchLoader());
+                commandList.writeAccelerationStructuresPropertiesKHR(1, &asHandle, vk::QueryType::eAccelerationStructureCompactedSizeKHR, pool, queryIndex, VkBlock::getDispatchLoader());
             }
         }
     }
@@ -221,8 +234,8 @@ namespace rtxmu
                 vk::QueryPool& pool = accelStruct->queryCompactionSizeMemory.block.queryPool;
 
                 vk::DeviceSize compactionSize;
-                auto result = VkBlock::m_device.getQueryPoolResults(pool, queryIndex, 1, (size_t)sizeof(vk::DeviceSize), (void*)&compactionSize,
-                    (vk::DeviceSize)SizeOfCompactionDescriptor, vk::QueryResultFlagBits::eWait | vk::QueryResultFlagBits::e64, VkBlock::m_dispatchLoader);
+                auto result = m_allocator.device.getQueryPoolResults(pool, queryIndex, 1, (size_t)sizeof(vk::DeviceSize), (void*)&compactionSize,
+                    (vk::DeviceSize)SizeOfCompactionDescriptor, vk::QueryResultFlagBits::eWait | vk::QueryResultFlagBits::e64, VkBlock::getDispatchLoader());
                 (void)result;
 
                 accelStruct->compactionGpuMemory = m_compactionPool->allocate(compactionSize);
@@ -232,9 +245,9 @@ namespace rtxmu
                 auto asCreateInfo = vk::AccelerationStructureCreateInfoKHR()
                     .setType(vk::AccelerationStructureTypeKHR::eBottomLevel)
                     .setSize(compactionSize)
-                    .setBuffer(accelStruct->compactionGpuMemory.block.m_buffer)
+                    .setBuffer(accelStruct->compactionGpuMemory.block.getBuffer())
                     .setOffset(accelStruct->compactionGpuMemory.offset);
-                auto asHandle = VkBlock::m_device.createAccelerationStructureKHR(asCreateInfo);
+                auto asHandle = m_allocator.device.createAccelerationStructureKHR(asCreateInfo, nullptr, VkBlock::getDispatchLoader());
                 accelStruct->compactionGpuMemory.block.m_asHandle = asHandle;
 
                 auto copyInfo = vk::CopyAccelerationStructureInfoKHR()
@@ -261,13 +274,13 @@ namespace rtxmu
                         .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR)
                         .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                         .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                        .setBuffer(accelStruct->compactionGpuMemory.block.m_buffer)
+                        .setBuffer(accelStruct->compactionGpuMemory.block.getBuffer())
                         .setOffset(accelStruct->compactionGpuMemory.offset)
                         .setSize(accelStruct->compactionGpuMemory.subBlock->getSize());
 
                     commandList.pipelineBarrier(vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
                         vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
-                        vk::DependencyFlags(), 0, nullptr, 1, &barrier, 0, nullptr, VkBlock::m_dispatchLoader);
+                        vk::DependencyFlags(), 0, nullptr, 1, &barrier, 0, nullptr, VkBlock::getDispatchLoader());
                 }
             }
         }
@@ -323,11 +336,12 @@ namespace rtxmu
     {
         VkAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
 
-        return accelStruct->isCompacted ?
-                   VkBlock::getDeviceAddress(accelStruct->compactionGpuMemory.block,
-                                             accelStruct->compactionGpuMemory.offset) :
-                   VkBlock::getDeviceAddress(accelStruct->resultGpuMemory.block,
-                                             accelStruct->resultGpuMemory.offset);
+        return accelStruct->isCompacted ? VkBlock::getDeviceAddress(m_allocator.device,
+                                                                    accelStruct->compactionGpuMemory.block,
+                                                                    accelStruct->compactionGpuMemory.offset) :
+                                          VkBlock::getDeviceAddress(m_allocator.device,
+                                                                    accelStruct->resultGpuMemory.block,
+                                                                    accelStruct->resultGpuMemory.offset);
     }
 
     vk::AccelerationStructureKHR VkAccelStructManager::GetAccelerationStruct(const uint64_t accelStructId)
@@ -344,25 +358,27 @@ namespace rtxmu
         VkAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
 
         return accelStruct->isCompacted ?
-                   accelStruct->compactionGpuMemory.block.m_buffer :
-                   accelStruct->resultGpuMemory.block.m_buffer;
+                   accelStruct->compactionGpuMemory.block.getBuffer() :
+                   accelStruct->resultGpuMemory.block.getBuffer();
     }
 
-    // Returns a log containing memory consumption information
+    // Returns a const char* containing memory consumption information
     const char* VkAccelStructManager::GetLog()
     {
+        // Clear out previous logging
         m_buildLogger.clear();
 
         double memoryReductionRatio = (static_cast<double>(m_totalCompactedMemory) / (m_totalUncompactedMemory + 1.0));
         double fragmentedRatio = 1.0 - (static_cast<double>(m_totalCompactedMemory) / (m_compactionPool->getSize() + 1.0f));
         m_buildLogger.append(
-            "Theoretical uncompacted  memory:     " + std::to_string(m_totalUncompactedMemory / 1000000.0f) + " MB\n"
-            "Compaction               memory:     " + std::to_string(m_totalCompactedMemory / 1000000.0f) + " MB\n"
-            "Compaction  memory       reduction:  " + std::to_string(memoryReductionRatio * 100.0f) + " %%\n"
-            "Uncompacted suballocator memory:     " + std::to_string(m_resultPool->getSize() / 1000000.0f) + " MB\n"
-            "Compaction  suballocator memory:     " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
-            "Scratch     suballocator memory:     " + std::to_string(m_scratchPool->getSize() / 1000000.0f) + " MB\n"
-            "Compaction  fragmented   percentage: " + std::to_string(fragmentedRatio * 100.0f) + " %%\n"
+            "TOTAL Result memory allocated:     " + std::to_string(m_totalUncompactedMemory / 1000000.0f) + " MB\n"
+            "TOTAL Compaction memory allocated: " + std::to_string(m_totalCompactedMemory / 1000000.0f) + " MB\n"
+            "Compaction memory reduction:       " + std::to_string(memoryReductionRatio * 100.0f) + " %\n"
+            "Result suballocator memory:        " + std::to_string(m_resultPool->getSize() / 1000000.0f) + " MB\n"
+            "Compaction suballocator memory:    " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
+            "Scratch suballocator memory:       " + std::to_string(m_scratchPool->getSize() / 1000000.0f) + " MB\n"
+            "Update suballocator memory:        " + std::to_string(m_updatePool->getSize() / 1000000.0f) + " MB\n"
+            "Compaction fragmented percentage:  " + std::to_string(fragmentedRatio * 100.0f) + " %\n"
         );
 
         return m_buildLogger.c_str();
@@ -372,8 +388,7 @@ namespace rtxmu
     {
         VkAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
 
-        // Only delete compaction size, result and scratch buffers if compaction was done
-        // The assumption is that only static acceleration structures will be compacted
+        // Only delete compaction size and result if compaction was performed
         if (accelStruct->isCompacted == true)
         {
             // Deallocate all the buffers used to create a compaction AS buffer
@@ -387,11 +402,12 @@ namespace rtxmu
             {
                 m_queryCompactionSizePool->free(accelStruct->queryCompactionSizeMemory.subBlock);
             }
-            if ((accelStruct->scratchGpuMemory.subBlock != nullptr) &&
-                (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
-            {
-                m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
-            }
+        }
+
+        if ((accelStruct->scratchGpuMemory.subBlock != nullptr) &&
+            (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
+        {
+            m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
         }
     }
 
@@ -407,6 +423,11 @@ namespace rtxmu
             (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
         {
             m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
+        }
+        if ((accelStruct->updateGpuMemory.subBlock != nullptr) &&
+            (accelStruct->updateGpuMemory.subBlock->isFree() == false))
+        {
+            m_updatePool->free(accelStruct->updateGpuMemory.subBlock);
         }
         if ((accelStruct->resultGpuMemory.subBlock != nullptr) &&
             (accelStruct->resultGpuMemory.subBlock->isFree() == false))
