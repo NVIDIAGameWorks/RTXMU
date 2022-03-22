@@ -254,7 +254,7 @@ namespace rtxmu
                     .setMode(vk::CopyAccelerationStructureModeKHR::eCompact)
                     .setSrc(accelStruct->resultGpuMemory.block.m_asHandle)
                     .setDst(accelStruct->compactionGpuMemory.block.m_asHandle);
-                commandList.copyAccelerationStructureKHR(copyInfo);
+                commandList.copyAccelerationStructureKHR(copyInfo, VkBlock::getDispatchLoader());
 
                 accelStruct->isCompacted = true;
                 compactionCopiesPerformed = true;
