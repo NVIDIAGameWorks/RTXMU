@@ -88,9 +88,13 @@ namespace rtxmu
         vk::MemoryRequirements memoryRequirements = allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
         uint32_t memoryTypeIndex = getMemoryIndex(allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
 
+        auto allocFlags = vk::MemoryAllocateFlagsInfo();
+        allocFlags.flags |= vk::MemoryAllocateFlagBits::eDeviceAddress;
+        
         auto memoryInfo = vk::MemoryAllocateInfo()
             .setAllocationSize(size)
-            .setMemoryTypeIndex(memoryTypeIndex);
+            .setMemoryTypeIndex(memoryTypeIndex)
+            .setPNext(&allocFlags);
 
         m_memory = allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
         allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
