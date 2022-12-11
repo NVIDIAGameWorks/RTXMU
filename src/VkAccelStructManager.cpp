@@ -402,8 +402,15 @@ namespace rtxmu
             {
                 m_queryCompactionSizePool->free(accelStruct->queryCompactionSizeMemory.subBlock);
             }
+            //Destroy the result AccelStruct, because the compaction AccelStruct is used
+            auto& resultAS = accelStruct->resultGpuMemory.block.m_asHandle;
+            if(resultAS)
+            {
+                m_allocator.device.destroyAccelerationStructureKHR(resultAS, nullptr, VkBlock::getDispatchLoader());
+                resultAS = nullptr;
+            }
         }
-
+        
         if ((accelStruct->scratchGpuMemory.subBlock != nullptr) &&
             (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
         {
@@ -439,6 +446,20 @@ namespace rtxmu
         {
             m_compactionPool->free(accelStruct->compactionGpuMemory.subBlock);
         }
+
+        auto&compactionAS = accelStruct->compactionGpuMemory.block.m_asHandle;
+        auto& resultAS = accelStruct->resultGpuMemory.block.m_asHandle;
+        // Destroy the acceleration structures
+        if (accelStruct->isCompacted && compactionAS)
+        {
+            m_allocator.device.destroyAccelerationStructureKHR(compactionAS, nullptr, VkBlock::getDispatchLoader());
+        }
+        if (resultAS)
+        {
+            m_allocator.device.destroyAccelerationStructureKHR(resultAS, nullptr, VkBlock::getDispatchLoader());
+        }
+        accelStruct->resultGpuMemory.block.m_asHandle = nullptr;
+        accelStruct->compactionGpuMemory.block.m_asHandle = nullptr;
 
         ReleaseAccelStructId( accelStructId);
     }
