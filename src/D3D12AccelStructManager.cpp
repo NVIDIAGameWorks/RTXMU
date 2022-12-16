@@ -94,9 +94,9 @@ namespace rtxmu
                 D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo = {};
                 m_device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
 
-                // Do not support rebuilds that need to change memory sizes
-                assert(accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes &&
-                       accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes);
+                // Do not support rebuilds that require more memory
+                assert(accelStruct->scratchGpuMemory.subBlock->getSize() >= prebuildInfo.ScratchDataSizeInBytes &&
+                       accelStruct->resultGpuMemory.subBlock->getSize() >= prebuildInfo.ResultDataMaxSizeInBytes);
 
                 // All scratch is discarded after the build is performed but if a recurring build happens
                 // then we need to reallocate the same size

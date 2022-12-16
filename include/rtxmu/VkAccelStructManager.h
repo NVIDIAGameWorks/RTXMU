@@ -51,6 +51,7 @@ namespace rtxmu
         void PopulateUpdateCommandList(vk::CommandBuffer                                  commandList,
                                        vk::AccelerationStructureBuildGeometryInfoKHR*     geomInfos,
                                        const vk::AccelerationStructureBuildRangeInfoKHR** rangeInfos,
+                                       const uint32_t**                                   maxPrimitiveCounts,
                                        const uint32_t                                     buildCount,
                                        std::vector<uint64_t>&                             accelStructIds);
 
