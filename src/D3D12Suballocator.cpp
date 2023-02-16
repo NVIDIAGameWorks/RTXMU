@@ -13,6 +13,7 @@
 *
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+*
 * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
@@ -25,7 +26,7 @@
 namespace rtxmu
 {
         D3D12_GPU_VIRTUAL_ADDRESS D3D12Block::getGPUVA(D3D12Block block,
-                                                              uint64_t   offset)
+                                                       uint64_t   offset)
         {
             D3D12_GPU_VIRTUAL_ADDRESS gpuVA = block.m_resource->GetGPUVirtualAddress() + offset;
             return gpuVA;

@@ -92,14 +92,16 @@ namespace rtxmu
 
         virtual ~Suballocator()
         {
-            uint32_t blockIndex = 0;
-            for (BlockDesc* blockDesc : m_blocks)
+            size_t blockCount = m_blocks.size();
+
+            for (uint32_t blockIndex = 0; blockIndex < blockCount; blockIndex++)
             {
-                blockDesc->block.free(m_allocator);
-                m_blocks.erase(m_blocks.begin() + blockIndex);
+                m_blocks[blockIndex]->block.free(m_allocator);
                 blockIndex++;
             }
+            m_blocks.clear();
         }
+
         SubAllocation allocate(uint64_t size)
         {
             // Align allocation
@@ -362,3 +364,4 @@ namespace rtxmu
     };
 
 }// end rtxmu namespace
+

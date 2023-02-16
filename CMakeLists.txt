@@ -9,8 +9,22 @@ set(CMAKE_CXX_EXTENSIONS ON)
 include(CMakeDependentOption)
 
 if (NOT RTXMU_VULKAN_INCLUDE_DIR)
-	find_package(Vulkan REQUIRED FATAL_ERROR)
-	set(RTXMU_VULKAN_INCLUDE_DIR ${Vulkan_INCLUDE_DIR})
+	#find_package(Vulkan REQUIRED FATAL_ERROR)
+	find_package(Vulkan)
+	if (Vulkan_FOUND)
+		set(RTXMU_VULKAN_INCLUDE_DIR ${Vulkan_INCLUDE_DIR})
+	else()
+		# CMake may fail to locate the libraries but could be able to
+		# provide some path in Vulkan SDK include directory variable
+		# 'Vulkan_INCLUDE_DIRS', try to extract path from this.
+		message(STATUS "Failed to locate Vulkan SDK, retrying again...")
+		if(EXISTS "${VULKAN_PATH}")
+			message(STATUS "Successfully located the Vulkan SDK: ${VULKAN_PATH}")
+		else()
+			message("Error: Unable to locate Vulkan SDK. Please turn off auto locate option by specifying 'AUTO_LOCATE_VULKAN' as 'OFF'")
+			message("and specify manually path using 'VULKAN_SDK' and 'VULKAN_VERSION' variables in the CMakeLists.txt.")
+		endif()
+	endif()
 endif()
 
 cmake_dependent_option(RTXMU_WITH_D3D12 "Support D3D12" ON WIN32 OFF)

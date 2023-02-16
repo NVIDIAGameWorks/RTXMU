@@ -83,9 +83,6 @@ namespace rtxmu
             }
             else
             {
-                // Do not support rebuilds with compaction, not good practice
-                assert((asInputs[buildIndex].Flags & D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION) == 0);
-
                 // Setup build desc and allocator scratch and result buffers
                 D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
                 buildDesc.Inputs                                             = asInputs[buildIndex];
@@ -94,9 +91,22 @@ namespace rtxmu
                 D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo = {};
                 m_device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
 
-                // Do not support rebuilds that require more memory
-                assert(accelStruct->scratchGpuMemory.subBlock->getSize() >= prebuildInfo.ScratchDataSizeInBytes &&
-                       accelStruct->resultGpuMemory.subBlock->getSize() >= prebuildInfo.ResultDataMaxSizeInBytes);
+                // If the previous memory stores for the acceleration structure are not adequate then reallocate
+                if (accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes ||
+                    accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes)
+                {
+                    accelStruct->resultGpuMemory = m_resultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
+
+                    accelStruct->scratchGpuMemory = m_scratchPool->allocate(prebuildInfo.ScratchDataSizeInBytes);
+                    accelStruct->scratchSize = accelStruct->scratchGpuMemory.subBlock->getSize();
+
+                    m_totalUncompactedMemory += accelStruct->resultGpuMemory.subBlock->getSize();
+                    accelStruct->resultSize = accelStruct->resultGpuMemory.subBlock->getSize();
+
+                    // Double check to make sure memory is large enough
+                    assert(accelStruct->scratchGpuMemory.subBlock->getSize() >= prebuildInfo.ScratchDataSizeInBytes &&
+                           accelStruct->resultGpuMemory.subBlock->getSize() >= prebuildInfo.ResultDataMaxSizeInBytes);
+                }
 
                 // All scratch is discarded after the build is performed but if a recurring build happens
                 // then we need to reallocate the same size
@@ -209,6 +219,7 @@ namespace rtxmu
     void DxAccelStructManager::PopulateCompactionSizeCopiesCommandList(ID3D12GraphicsCommandList4* commandList,
                                                                        const std::vector<uint64_t>& accelStructIds)
     {
+        m_threadSafeLock.lock();
         (void)accelStructIds;
 
         auto gpuSizeBlocks = m_compactionSizeGpuPool->getBlocks();
@@ -239,12 +250,14 @@ namespace rtxmu
 
             commandList->ResourceBarrier(1, &rb);
         }
+        m_threadSafeLock.unlock();
     }
 
     // Receives acceleration structure inputs and places UAV barriers for them
     void DxAccelStructManager::PopulateUAVBarriersCommandList(ID3D12GraphicsCommandList4*  commandList,
                                                               const std::vector<uint64_t>& accelStructIds)
     {
+        m_threadSafeLock.lock();
         for (uint64_t accelStructId : accelStructIds)
         {
             D3D12_RESOURCE_BARRIER rb = {};
@@ -254,6 +267,7 @@ namespace rtxmu
             rb.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
             commandList->ResourceBarrier(1, &rb);
         }
+        m_threadSafeLock.unlock();
     }
 
     // Returns a command list with compaction copies if the acceleration structures are ready to be compacted
@@ -408,8 +422,10 @@ namespace rtxmu
             }
         }
 
-        // Always deallocate scratch and reallocate later for rebuild acceleration structures
-        if ((accelStruct->scratchGpuMemory.subBlock != nullptr) &&
+        // Be cautious here and if the acceleration structure did not request compaction then
+        // assume rebuilds or updates will deployed and do not deallocate scratch
+        if ((accelStruct->requestedCompaction == true) &&
+            (accelStruct->scratchGpuMemory.subBlock != nullptr) &&
             (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
         {
             m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);

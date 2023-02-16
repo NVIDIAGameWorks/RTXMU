@@ -86,8 +86,8 @@ namespace rtxmu
         // Returns a "string" containing memory consumption information
         const char* GetLog();
 
-        // Returns if acceleration structure has been compacted
-        bool IsCompacted(const uint64_t accelStructId) { return m_asBufferBuildQueue[accelStructId]->isCompacted; }
+        // Client is responsible for tagging as completed compaction on GPU
+        void SetCompacted(const uint64_t accelStructId) { m_asBufferBuildQueue[accelStructId]->isCompacted = true; }
 
     private:
         
@@ -108,6 +108,5 @@ namespace rtxmu
         std::unique_ptr<Suballocator<ID3D12Device5, D3D12AccelStructBlock>>     m_compactionPool;
         std::unique_ptr<Suballocator<ID3D12Device5, D3D12CompactionWriteBlock>> m_compactionSizeGpuPool;
         std::unique_ptr<Suballocator<ID3D12Device5, D3D12ReadBackBlock>>        m_compactionSizeCpuPool;
-
     };
 }
