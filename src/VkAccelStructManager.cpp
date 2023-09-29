@@ -121,9 +121,6 @@ namespace rtxmu
                     geomInfos[buildIndex].dstAccelerationStructure = asHandle;
                 }
 
-                auto buildSizeInfo = vk::AccelerationStructureBuildSizesInfoKHR();
-                m_allocator.device.getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, &geomInfos[buildIndex], maxPrimitiveCounts[buildIndex], &buildSizeInfo, VkBlock::getDispatchLoader());
-
                 // Do not support rebuilds that require more memory
                 assert(accelStruct->scratchGpuMemory.subBlock->getSize() >= buildSizeInfo.buildScratchSize &&
                        accelStruct->resultGpuMemory.subBlock->getSize() >= buildSizeInfo.accelerationStructureSize);
