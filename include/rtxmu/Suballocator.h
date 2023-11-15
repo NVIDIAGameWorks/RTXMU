@@ -97,7 +97,6 @@ namespace rtxmu
             for (uint32_t blockIndex = 0; blockIndex < blockCount; blockIndex++)
             {
                 m_blocks[blockIndex]->block.free(m_allocator);
-                blockIndex++;
             }
             m_blocks.clear();
         }
