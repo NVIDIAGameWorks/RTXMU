@@ -402,6 +402,18 @@ namespace rtxmu
                    accelStruct->resultGpuMemory.block.getBuffer();
     }
 
+    bool VkAccelStructManager::GetRequestedCompaction(const uint64_t accelStructId)
+    {
+        VkAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+        return accelStruct->requestedCompaction;
+    }
+
+    bool VkAccelStructManager::GetCompactionComplete(const uint64_t accelStructId)
+    {
+        VkAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+        return accelStruct->isCompacted;
+    }
+
     // Returns a const char* containing memory consumption information
     const char* VkAccelStructManager::GetLog()
     {
@@ -411,14 +423,14 @@ namespace rtxmu
         double memoryReductionRatio = (static_cast<double>(m_totalCompactedMemory) / (m_totalUncompactedMemory + 1.0));
         double fragmentedRatio = 1.0 - (static_cast<double>(m_totalCompactedMemory) / (m_compactionPool->getSize() + 1.0f));
         m_buildLogger.append(
-            "TOTAL Result memory allocated:     " + std::to_string(m_totalUncompactedMemory / 1000000.0f) + " MB\n"
-            "TOTAL Compaction memory allocated: " + std::to_string(m_totalCompactedMemory / 1000000.0f) + " MB\n"
-            "Compaction memory reduction:       " + std::to_string(memoryReductionRatio * 100.0f) + " %\n"
-            "Result suballocator memory:        " + std::to_string(m_resultPool->getSize() / 1000000.0f) + " MB\n"
-            "Compaction suballocator memory:    " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
-            "Scratch suballocator memory:       " + std::to_string(m_scratchPool->getSize() / 1000000.0f) + " MB\n"
-            "Update suballocator memory:        " + std::to_string(m_updatePool->getSize() / 1000000.0f) + " MB\n"
-            "Compaction fragmented percentage:  " + std::to_string(fragmentedRatio * 100.0f) + " %\n"
+            "TOTAL Result memory allocated:          " + std::to_string(m_totalUncompactedMemory    / 1000000.0f) + " MB\n"
+            "TOTAL Compaction memory allocated:      " + std::to_string(m_totalCompactedMemory      / 1000000.0f) + " MB\n"
+            "Compaction memory reduction percentage: " + std::to_string(memoryReductionRatio        * 100.0f)     + " %%\n"
+            "Result suballocator memory:             " + std::to_string(m_resultPool->getSize()     / 1000000.0f) + " MB\n"
+            "Compaction suballocator memory:         " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
+            "Scratch suballocator memory:            " + std::to_string(m_scratchPool->getSize()    / 1000000.0f) + " MB\n"
+            "Update suballocator memory:             " + std::to_string(m_updatePool->getSize()     / 1000000.0f) + " MB\n"
+            "Compaction fragmented percentage:       " + std::to_string(fragmentedRatio             * 100.0f)     + " %%\n"
         );
 
         return m_buildLogger.c_str();

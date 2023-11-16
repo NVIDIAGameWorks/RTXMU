@@ -30,12 +30,12 @@ namespace rtxmu
 
     struct DxAccelerationStructure : AccelerationStructure
     {
-        Suballocator<ID3D12Device5, D3D12ScratchBlock>::SubAllocation updateGpuMemory;
-        Suballocator<ID3D12Device5, D3D12ScratchBlock>::SubAllocation scratchGpuMemory;
-        Suballocator<ID3D12Device5, D3D12AccelStructBlock>::SubAllocation resultGpuMemory;
-        Suballocator<ID3D12Device5, D3D12AccelStructBlock>::SubAllocation compactionGpuMemory;
-        Suballocator<ID3D12Device5, D3D12ReadBackBlock>::SubAllocation compactionSizeCpuMemory;
-        Suballocator<ID3D12Device5, D3D12CompactionWriteBlock>::SubAllocation compactionSizeGpuMemory;
+        Suballocator<Allocator, D3D12ScratchBlock>::SubAllocation updateGpuMemory;
+        Suballocator<Allocator, D3D12ScratchBlock>::SubAllocation scratchGpuMemory;
+        Suballocator<Allocator, D3D12AccelStructBlock>::SubAllocation resultGpuMemory;
+        Suballocator<Allocator, D3D12AccelStructBlock>::SubAllocation compactionGpuMemory;
+        Suballocator<Allocator, D3D12ReadBackBlock>::SubAllocation compactionSizeCpuMemory;
+        Suballocator<Allocator, D3D12CompactionWriteBlock>::SubAllocation compactionSizeGpuMemory;
     };
 
     class DxAccelStructManager : public AccelStructManager<DxAccelerationStructure>
@@ -83,11 +83,14 @@ namespace rtxmu
         // Returns GPUVA of the acceleration structure
         D3D12_GPU_VIRTUAL_ADDRESS GetAccelStructGPUVA(const uint64_t accelStructId);
 
+        // Returns whether the acceleration structure requested compaction
+        bool GetRequestedCompaction(const uint64_t accelStructId);
+
+        // Returns whether the acceleration structure is ready in compaction state
+        bool GetCompactionComplete(const uint64_t accelStructId);
+
         // Returns a "string" containing memory consumption information
         const char* GetLog();
-
-        // Client is responsible for tagging as completed compaction on GPU
-        void SetCompacted(const uint64_t accelStructId) { m_asBufferBuildQueue[accelStructId]->isCompacted = true; }
 
     private:
         
@@ -98,15 +101,14 @@ namespace rtxmu
 
         void ReleaseAccelerationStructures(const uint64_t accelStructId);
 
-        // Device responsible for allocating with this manager
-        ID3D12Device5* m_device;
+        Allocator m_allocator;
 
         // Suballocation buffers
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12ScratchBlock>>         m_scratchPool;
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12AccelStructBlock>>     m_resultPool;
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12ScratchBlock>>         m_updatePool;
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12AccelStructBlock>>     m_compactionPool;
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12CompactionWriteBlock>> m_compactionSizeGpuPool;
-        std::unique_ptr<Suballocator<ID3D12Device5, D3D12ReadBackBlock>>        m_compactionSizeCpuPool;
+        std::unique_ptr<Suballocator<Allocator, D3D12ScratchBlock>>         m_scratchPool;
+        std::unique_ptr<Suballocator<Allocator, D3D12AccelStructBlock>>     m_resultPool;
+        std::unique_ptr<Suballocator<Allocator, D3D12ScratchBlock>>         m_updatePool;
+        std::unique_ptr<Suballocator<Allocator, D3D12AccelStructBlock>>     m_compactionPool;
+        std::unique_ptr<Suballocator<Allocator, D3D12CompactionWriteBlock>> m_compactionSizeGpuPool;
+        std::unique_ptr<Suballocator<Allocator, D3D12ReadBackBlock>>        m_compactionSizeCpuPool;
     };
 }

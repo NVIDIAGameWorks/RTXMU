@@ -27,7 +27,7 @@ namespace rtxmu
 
     DxAccelStructManager::DxAccelStructManager(ID3D12Device5* device)
     {
-        m_device = device;
+        m_allocator.device = device;
     }
     
     // Initializes suballocator block size
@@ -35,12 +35,12 @@ namespace rtxmu
     {
         m_suballocationBlockSize = suballocatorBlockSize;
 
-        m_scratchPool = std::make_unique<Suballocator<ID3D12Device5, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, m_device);
-        m_updatePool = std::make_unique<Suballocator<ID3D12Device5, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, m_device);
-        m_resultPool = std::make_unique<Suballocator<ID3D12Device5, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, m_device);
-        m_compactionPool = std::make_unique<Suballocator<ID3D12Device5, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, m_device);
-        m_compactionSizeGpuPool = std::make_unique<Suballocator<ID3D12Device5, D3D12CompactionWriteBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, m_device);
-        m_compactionSizeCpuPool = std::make_unique<Suballocator<ID3D12Device5, D3D12ReadBackBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, m_device);
+        m_scratchPool = std::make_unique<Suballocator<Allocator, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_updatePool = std::make_unique<Suballocator<Allocator, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_resultPool = std::make_unique<Suballocator<Allocator, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_compactionPool = std::make_unique<Suballocator<Allocator, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_compactionSizeGpuPool = std::make_unique<Suballocator<Allocator, D3D12CompactionWriteBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, &m_allocator);
+        m_compactionSizeCpuPool = std::make_unique<Suballocator<Allocator, D3D12ReadBackBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, &m_allocator);
     }
 
     // Resets all queues and frees all memory in suballocators
@@ -89,7 +89,7 @@ namespace rtxmu
 
                 // Request build size information and suballocate the scratch and result buffers
                 D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo = {};
-                m_device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
+                m_allocator.device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
 
                 // If the previous memory stores for the acceleration structure are not adequate then reallocate
                 if (accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes ||
@@ -148,7 +148,7 @@ namespace rtxmu
 
             // Request build size information and suballocate the scratch and result buffers
             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo = {};
-            m_device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
+            m_allocator.device->GetRaytracingAccelerationStructurePrebuildInfo(&asInputs[buildIndex], &prebuildInfo);
 
             DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[asId];
 
@@ -341,6 +341,18 @@ namespace rtxmu
                                         accelStruct->resultGpuMemory.offset);
     }
 
+    bool DxAccelStructManager::GetRequestedCompaction(const uint64_t accelStructId)
+    {
+        DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+        return accelStruct->requestedCompaction;
+    }
+
+    bool DxAccelStructManager::GetCompactionComplete(const uint64_t accelStructId)
+    {
+        DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+        return accelStruct->isCompacted;
+    }
+
     // Returns a const char* containing memory consumption information
     const char* DxAccelStructManager::GetLog()
     {
@@ -350,14 +362,14 @@ namespace rtxmu
         double memoryReductionRatio = (static_cast<double>(m_totalCompactedMemory) / (m_totalUncompactedMemory + 1.0));
         double fragmentedRatio = 1.0 - (static_cast<double>(m_totalCompactedMemory) / (m_compactionPool->getSize() + 1.0f));
         m_buildLogger.append(
-            "TOTAL Result memory allocated:     " + std::to_string(m_totalUncompactedMemory    / 1000000.0f) + " MB\n"
-            "TOTAL Compaction memory allocated: " + std::to_string(m_totalCompactedMemory      / 1000000.0f) + " MB\n"
-            "Compaction memory reduction:       " + std::to_string(memoryReductionRatio        * 100.0f)     + " %\n"
-            "Result suballocator memory:        " + std::to_string(m_resultPool->getSize()     / 1000000.0f) + " MB\n"
-            "Compaction suballocator memory:    " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
-            "Scratch suballocator memory:       " + std::to_string(m_scratchPool->getSize()    / 1000000.0f) + " MB\n"
-            "Update suballocator memory:        " + std::to_string(m_updatePool->getSize()     / 1000000.0f) + " MB\n"
-            "Compaction fragmented percentage:  " + std::to_string(fragmentedRatio             * 100.0f)     + " %\n"
+            "TOTAL Result memory allocated:          " + std::to_string(m_totalUncompactedMemory    / 1000000.0f) + " MB\n"
+            "TOTAL Compaction memory allocated:      " + std::to_string(m_totalCompactedMemory      / 1000000.0f) + " MB\n"
+            "Compaction memory reduction percentage: " + std::to_string(memoryReductionRatio        * 100.0f)     + " %%\n"
+            "Result suballocator memory:             " + std::to_string(m_resultPool->getSize()     / 1000000.0f) + " MB\n"
+            "Compaction suballocator memory:         " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
+            "Scratch suballocator memory:            " + std::to_string(m_scratchPool->getSize()    / 1000000.0f) + " MB\n"
+            "Update suballocator memory:             " + std::to_string(m_updatePool->getSize()     / 1000000.0f) + " MB\n"
+            "Compaction fragmented percentage:       " + std::to_string(fragmentedRatio             * 100.0f)     + " %%\n"
         );
 
         return m_buildLogger.c_str();

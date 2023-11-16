@@ -29,8 +29,10 @@
 
 namespace rtxmu
 {
-    // If suballocator blocks are larger than 4 MB then use placed resources for large page sizes
-    constexpr bool Use4MBAlignedPlacedResources = true;
+    struct Allocator
+    {
+        ID3D12Device5* device;
+    };
 
     class D3D12Block
     {
@@ -39,13 +41,12 @@ namespace rtxmu
         static D3D12_GPU_VIRTUAL_ADDRESS getGPUVA(D3D12Block block,
                                                   uint64_t   offset);
 
-        void allocate(ID3D12Device5*        device,
+        void allocate(Allocator*            allocator,
                       uint64_t              size,
                       D3D12_HEAP_TYPE       heapType,
-                      D3D12_RESOURCE_STATES state,
-                      uint32_t              alignment);
+                      D3D12_RESOURCE_STATES state);
 
-        void free(ID3D12Device5* device);
+        void free(Allocator* allocator);
 
         uint64_t getVMA();
 
@@ -66,9 +67,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 
@@ -81,9 +82,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 
@@ -96,9 +97,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 
@@ -111,9 +112,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 
@@ -126,9 +127,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 
@@ -141,9 +142,9 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(ID3D12Device5* device, uint64_t size)
+        void allocate(Allocator* allocator, uint64_t size)
         {
-            D3D12Block::allocate(device, size, heapType, state, alignment);
+            D3D12Block::allocate(allocator, size, heapType, state);
         }
     };
 }

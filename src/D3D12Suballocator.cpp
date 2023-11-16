@@ -37,12 +37,13 @@ namespace rtxmu
             return m_resource;
         }
 
-        void D3D12Block::allocate(ID3D12Device5*        device,
+        void D3D12Block::allocate(Allocator*            allocator,
                                   uint64_t              size,
                                   D3D12_HEAP_TYPE       heapType,
-                                  D3D12_RESOURCE_STATES state,
-                                  uint32_t              alignment)
+                                  D3D12_RESOURCE_STATES state)
         {
+            ID3D12Device5* device = allocator->device;
+
             D3D12_RESOURCE_DESC desc = {};
             desc.Dimension           = D3D12_RESOURCE_DIMENSION_BUFFER;
             desc.Alignment           = 0;
@@ -72,40 +73,17 @@ namespace rtxmu
             heapProperties.CreationNodeMask      = 1;
             heapProperties.VisibleNodeMask       = 1;
 
-            if ((Use4MBAlignedPlacedResources == true) &&
-                (alignment == D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT))
-            {
-                ID3D12Heap*     heap     = nullptr;
-                D3D12_HEAP_DESC heapDesc = {};
-                heapDesc.SizeInBytes     = size;
-                heapDesc.Properties      = heapProperties;
-                heapDesc.Alignment       = D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
-                heapDesc.Flags           = D3D12_HEAP_FLAG_NONE;
-
-                device->CreateHeap(&heapDesc,
-                                   IID_PPV_ARGS(&heap));
-
-                device->CreatePlacedResource(heap,
-                                             0,
-                                             &desc,
-                                             state,
-                                             nullptr,
-                                             IID_PPV_ARGS(&m_resource));
-            }
-            else if (alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
-            {
-                device->CreateCommittedResource(&heapProperties,
-                                                D3D12_HEAP_FLAG_NONE,
-                                                &desc,
-                                                state,
-                                                nullptr,
-                                                IID_PPV_ARGS(&m_resource));
-            }
+            device->CreateCommittedResource(&heapProperties,
+                                            D3D12_HEAP_FLAG_NONE,
+                                            &desc,
+                                            state,
+                                            nullptr,
+                                            IID_PPV_ARGS(&m_resource));
         }
 
-        void D3D12Block::free(ID3D12Device5* device)
+        void D3D12Block::free(Allocator* allocator)
         {
-            (void)device;
+            (void)allocator;
 
             m_resource->Release();
             m_resource = nullptr;

@@ -24,6 +24,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <mutex>
 
 namespace rtxmu
 {
@@ -92,6 +93,8 @@ namespace rtxmu
 
         virtual ~Suballocator()
         {
+            std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
             size_t blockCount = m_blocks.size();
 
             for (uint32_t blockIndex = 0; blockIndex < blockCount; blockIndex++)
@@ -103,6 +106,8 @@ namespace rtxmu
 
         SubAllocation allocate(uint64_t size)
         {
+            std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
             // Align allocation
             const uint64_t sizeInBytes = align(size, m_allocationAlignment);
 
@@ -191,6 +196,8 @@ namespace rtxmu
 
         void free(SubBlockRef* subBlockRef)
         {
+            std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
             SubBlock* subBlock = reinterpret_cast<SubBlock*>(subBlockRef);
             uint64_t blockIndex = 0;
             for (BlockDesc* blockDesc : m_blocks)
@@ -254,7 +261,7 @@ namespace rtxmu
             return size;
         }
 
-        std::vector<BlockDesc*> getBlocks()
+        const std::vector<BlockDesc*>& getBlocks()
         {
             return m_blocks;
         }
@@ -360,7 +367,7 @@ namespace rtxmu
         std::vector<BlockDesc*> m_blocks;
         Stats                   m_stats;
         AllocatorType*          m_allocator;
+        std::mutex              m_threadSafeLock;
     };
 
 }// end rtxmu namespace
-

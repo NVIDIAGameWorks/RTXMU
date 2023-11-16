@@ -92,6 +92,12 @@ namespace rtxmu
 
         vk::Buffer GetBuffer(const uint64_t accelStructId);
 
+        // Returns whether the acceleration structure requested compaction
+        bool GetRequestedCompaction(const uint64_t accelStructId);
+
+        // Returns whether the acceleration structure is ready in compaction state
+        bool GetCompactionComplete(const uint64_t accelStructId);
+
         // Returns a log containing memory consumption information
         const char* GetLog();
 
