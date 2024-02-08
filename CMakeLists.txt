@@ -31,6 +31,7 @@ cmake_dependent_option(RTXMU_WITH_D3D12 "Support D3D12" ON WIN32 OFF)
 option(RTXMU_WITH_VULKAN "Support Vulkan" ON)
 
 set (HEADER_FILES
+	include/rtxmu/Logger.h
 	include/rtxmu/Suballocator.h
 	include/rtxmu/AccelStructManager.h)
 

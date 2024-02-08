@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -20,25 +20,35 @@
 * SOFTWARE.
 */
 
-#include <rtxmu/D3D12AccelStructManager.h>
+#include "rtxmu/D3D12AccelStructManager.h"
 
 namespace rtxmu
 {
 
-    DxAccelStructManager::DxAccelStructManager(ID3D12Device5* device)
+    DxAccelStructManager::DxAccelStructManager(ID3D12Device5* device,
+                                               Logger::Level  verbosity,
+                                               bool           experimentalBuildFeature) :
+        AccelStructManager(verbosity)
     {
         m_allocator.device = device;
+
+        Logger::setLoggerCallback(&DxAccelStructManager::logCallbackFunction);
     }
-    
+
+    void DxAccelStructManager::logCallbackFunction(const char* msg)
+    {
+        OutputDebugStringA(msg);
+    }
+
     // Initializes suballocator block size
     void DxAccelStructManager::Initialize(uint32_t suballocatorBlockSize)
     {
         m_suballocationBlockSize = suballocatorBlockSize;
-
         m_scratchPool = std::make_unique<Suballocator<Allocator, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
         m_updatePool = std::make_unique<Suballocator<Allocator, D3D12ScratchBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
         m_resultPool = std::make_unique<Suballocator<Allocator, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
-        m_compactionPool = std::make_unique<Suballocator<Allocator, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_transientResultPool = std::make_unique<Suballocator<Allocator, D3D12AccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
+        m_compactionPool = std::make_unique<Suballocator<Allocator, D3D12CompactedAccelStructBlock>>(m_suballocationBlockSize, AccelStructAlignment, &m_allocator);
         m_compactionSizeGpuPool = std::make_unique<Suballocator<Allocator, D3D12CompactionWriteBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, &m_allocator);
         m_compactionSizeCpuPool = std::make_unique<Suballocator<Allocator, D3D12ReadBackBlock>>(CompactionSizeSuballocationBlockSize, SizeOfCompactionDescriptor, &m_allocator);
     }
@@ -49,6 +59,7 @@ namespace rtxmu
         m_scratchPool.reset();
         m_updatePool.reset();
         m_resultPool.reset();
+        m_transientResultPool.reset();
         m_compactionPool.reset();
         m_compactionSizeGpuPool.reset();
         m_compactionSizeCpuPool.reset();
@@ -62,7 +73,8 @@ namespace rtxmu
                                                          const uint32_t                                              buildCount,
                                                          const std::vector<uint64_t>&                                accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
         for (uint32_t buildIndex = 0; buildIndex < buildCount; buildIndex++)
         {
             const uint64_t accelStructId = accelStructIds[buildIndex];
@@ -80,6 +92,9 @@ namespace rtxmu
                 buildDesc.SourceAccelerationStructureData = GetAccelStructGPUVA(accelStructId);
 
                 commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+                std::string log = "RTXMU Update/Refit Build " + std::to_string(accelStructId) + "\n";
+                Logger::logDebug(log.c_str());
             }
             else
             {
@@ -95,6 +110,10 @@ namespace rtxmu
                 if (accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes ||
                     accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes)
                 {
+
+                    std::string log = "Rebuild memory size is too small so reallocate and leak memory\n";
+                    Logger::logWarning(log.c_str());
+
                     accelStruct->resultGpuMemory = m_resultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
 
                     accelStruct->scratchGpuMemory = m_scratchPool->allocate(prebuildInfo.ScratchDataSizeInBytes);
@@ -104,8 +123,13 @@ namespace rtxmu
                     accelStruct->resultSize = accelStruct->resultGpuMemory.subBlock->getSize();
 
                     // Double check to make sure memory is large enough
-                    assert(accelStruct->scratchGpuMemory.subBlock->getSize() >= prebuildInfo.ScratchDataSizeInBytes &&
-                           accelStruct->resultGpuMemory.subBlock->getSize() >= prebuildInfo.ResultDataMaxSizeInBytes);
+                    if (accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes ||
+                        accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes)
+                    {
+                        std::string log = "Rebuild memory size is too small after reallocating\n";
+                        Logger::logFatal(log.c_str());
+                        assert(0);
+                    }
                 }
 
                 // All scratch is discarded after the build is performed but if a recurring build happens
@@ -123,9 +147,12 @@ namespace rtxmu
                                                                                   accelStruct->resultGpuMemory.offset);
 
                 commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+                std::string log = "RTXMU Rebuild " + std::to_string(accelStructId) + "\n";
+                Logger::logDebug(log.c_str());
+
             }
         }
-        m_threadSafeLock.unlock();
     }
 
     // Receives acceleration structure inputs and returns a command list with build commands
@@ -134,15 +161,13 @@ namespace rtxmu
                                                         const uint64_t                                              buildCount,
                                                         std::vector<uint64_t>&                                      accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
 
         accelStructIds.reserve(buildCount);
-        bool compactionRequested = false;
-        DxAccelerationStructure* lastBuild = nullptr;
         for (uint32_t buildIndex = 0; buildIndex < buildCount; buildIndex++)
         {
             uint64_t asId = GetAccelStructId();
-               
+
             // Assign an id for the acceleration structure
             accelStructIds.push_back(asId);
 
@@ -152,7 +177,16 @@ namespace rtxmu
 
             DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[asId];
 
-            accelStruct->resultGpuMemory = m_resultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
+            if (asInputs[buildIndex].Flags & D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION)
+            {
+                // Allocate from transient result pool because it will be deallocated post compaction
+                accelStruct->resultGpuMemory = m_transientResultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
+            }
+            else
+            {
+                // Allocate from persistent result pool because it will be used from here on out
+                accelStruct->resultGpuMemory = m_resultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
+            }
 
             if (asInputs[buildIndex].Flags & D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE)
             {
@@ -197,7 +231,8 @@ namespace rtxmu
                 // Suballocate the readback memory
                 accelStruct->compactionSizeCpuMemory = m_compactionSizeCpuPool->allocate(SizeOfCompactionDescriptor);
 
-                compactionRequested = true;
+                std::string log = "RTXMU Initial Build Enabled Compaction " + std::to_string(asId) + "\n";
+                Logger::logDebug(log.c_str());
             }
             else
             {
@@ -207,19 +242,19 @@ namespace rtxmu
                 commandList->BuildRaytracingAccelerationStructure(&buildDesc,
                                                                   0,
                                                                   nullptr);
-            }
 
-            // Use the last build in the sequence for the barrier
-            lastBuild = accelStruct;
+                std::string log = "RTXMU Initial Build Disabled Compaction " + std::to_string(asId) + "\n";
+                Logger::logDebug(log.c_str());
+            }
         }
-        m_threadSafeLock.unlock();
     }
 
     // Compaction size copies
     void DxAccelStructManager::PopulateCompactionSizeCopiesCommandList(ID3D12GraphicsCommandList4* commandList,
                                                                        const std::vector<uint64_t>& accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
         (void)accelStructIds;
 
         auto gpuSizeBlocks = m_compactionSizeGpuPool->getBlocks();
@@ -250,14 +285,14 @@ namespace rtxmu
 
             commandList->ResourceBarrier(1, &rb);
         }
-        m_threadSafeLock.unlock();
     }
 
     // Receives acceleration structure inputs and places UAV barriers for them
     void DxAccelStructManager::PopulateUAVBarriersCommandList(ID3D12GraphicsCommandList4*  commandList,
                                                               const std::vector<uint64_t>& accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
         for (uint64_t accelStructId : accelStructIds)
         {
             D3D12_RESOURCE_BARRIER rb = {};
@@ -267,14 +302,13 @@ namespace rtxmu
             rb.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
             commandList->ResourceBarrier(1, &rb);
         }
-        m_threadSafeLock.unlock();
     }
 
     // Returns a command list with compaction copies if the acceleration structures are ready to be compacted
     void DxAccelStructManager::PopulateCompactionCommandList(ID3D12GraphicsCommandList4*  commandList,
                                                              const std::vector<uint64_t>& accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
 
         // Keep track of last compacted resource to include barrier if the
         // app requires a subsequent TLAS build or other read operation of the compacted version
@@ -299,25 +333,23 @@ namespace rtxmu
             rb.Type                   = D3D12_RESOURCE_BARRIER_TYPE_UAV;
             commandList->ResourceBarrier(1, &rb);
         }
-
-        m_threadSafeLock.unlock();
     }
 
     // Remove all memory that an Acceleration Structure might use
     void DxAccelStructManager::RemoveAccelerationStructures(const std::vector<uint64_t>& accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
+
         for (const uint64_t& accelStructId : accelStructIds)
         {
             ReleaseAccelerationStructures(accelStructId);
         }
-        m_threadSafeLock.unlock();
     }
 
     // Remove all memory used in build process, while only leaving the acceleration structure buffer itself in memory
     void DxAccelStructManager::GarbageCollection(const std::vector<uint64_t>& accelStructIds)
     {
-        m_threadSafeLock.lock();
+        std::lock_guard<std::mutex> guard(m_threadSafeLock);
 
         // Complete queue indicates cleanup for acceleration structures
         for (const uint64_t& accelStructId : accelStructIds)
@@ -325,11 +357,9 @@ namespace rtxmu
             PostBuildRelease(accelStructId);
             m_asBufferBuildQueue[accelStructId]->readyToFree = true;
         }
-
-        m_threadSafeLock.unlock();
     }
 
-    // Returns GPUVA of the acceleration structure
+    // Returns GPUVA of the acceleration structure based on the state of the accelstruct
     D3D12_GPU_VIRTUAL_ADDRESS DxAccelStructManager::GetAccelStructGPUVA(const uint64_t accelStructId)
     {
         DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
@@ -339,6 +369,31 @@ namespace rtxmu
                                         accelStruct->compactionGpuMemory.offset) :
                    D3D12Block::getGPUVA(accelStruct->resultGpuMemory.block,
                                         accelStruct->resultGpuMemory.offset);
+    }
+
+    // Returns the GPUVA of the compacted buffer for the specified accelstruct
+    D3D12_GPU_VIRTUAL_ADDRESS DxAccelStructManager::GetAccelStructCompactedGPUVA(const uint64_t accelStructId)
+    {
+        DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+
+        return accelStruct->compactionGpuMemory.subBlock == nullptr ? 0 : D3D12Block::getGPUVA(accelStruct->compactionGpuMemory.block,
+                                                                                               accelStruct->compactionGpuMemory.offset);
+    }
+
+    uint64_t DxAccelStructManager::GetInitialAccelStructSize(const uint64_t accelStructId)
+    {
+        DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+
+        return accelStruct->resultGpuMemory.subBlock->getSize() -
+               accelStruct->resultGpuMemory.subBlock->getUnusedSize();
+    }
+
+    uint64_t DxAccelStructManager::GetCompactedAccelStructSize(const uint64_t accelStructId)
+    {
+        DxAccelerationStructure* accelStruct = m_asBufferBuildQueue[accelStructId];
+
+        return accelStruct->compactionGpuMemory.subBlock->getSize() -
+               accelStruct->compactionGpuMemory.subBlock->getUnusedSize();
     }
 
     bool DxAccelStructManager::GetRequestedCompaction(const uint64_t accelStructId)
@@ -353,6 +408,11 @@ namespace rtxmu
         return accelStruct->isCompacted;
     }
 
+    bool DxAccelStructManager::IsValid(const uint64_t accelStructId)
+    {
+        return (accelStructId > ReservedId && accelStructId < m_asBufferBuildQueue.size()) && (m_asBufferBuildQueue[accelStructId] != nullptr);
+    }
+
     // Returns a const char* containing memory consumption information
     const char* DxAccelStructManager::GetLog()
     {
@@ -362,14 +422,15 @@ namespace rtxmu
         double memoryReductionRatio = (static_cast<double>(m_totalCompactedMemory) / (m_totalUncompactedMemory + 1.0));
         double fragmentedRatio = 1.0 - (static_cast<double>(m_totalCompactedMemory) / (m_compactionPool->getSize() + 1.0f));
         m_buildLogger.append(
-            "TOTAL Result memory allocated:          " + std::to_string(m_totalUncompactedMemory    / 1000000.0f) + " MB\n"
-            "TOTAL Compaction memory allocated:      " + std::to_string(m_totalCompactedMemory      / 1000000.0f) + " MB\n"
-            "Compaction memory reduction percentage: " + std::to_string(memoryReductionRatio        * 100.0f)     + " %%\n"
-            "Result suballocator memory:             " + std::to_string(m_resultPool->getSize()     / 1000000.0f) + " MB\n"
-            "Compaction suballocator memory:         " + std::to_string(m_compactionPool->getSize() / 1000000.0f) + " MB\n"
-            "Scratch suballocator memory:            " + std::to_string(m_scratchPool->getSize()    / 1000000.0f) + " MB\n"
-            "Update suballocator memory:             " + std::to_string(m_updatePool->getSize()     / 1000000.0f) + " MB\n"
-            "Compaction fragmented percentage:       " + std::to_string(fragmentedRatio             * 100.0f)     + " %%\n"
+            "TOTAL Result memory allocated:          " + std::to_string(m_totalUncompactedMemory         / 1000000.0f) + " MB\n"
+            "TOTAL Compaction memory allocated:      " + std::to_string(m_totalCompactedMemory           / 1000000.0f) + " MB\n"
+            "Compaction memory reduction percentage: " + std::to_string(memoryReductionRatio             * 100.0f)     + " %%\n"
+            "Result suballocator memory:             " + std::to_string(m_resultPool->getSize()          / 1000000.0f) + " MB\n"
+            "Transient Result suballocator memory:   " + std::to_string(m_transientResultPool->getSize() / 1000000.0f) + " MB\n"
+            "Compaction suballocator memory:         " + std::to_string(m_compactionPool->getSize()      / 1000000.0f) + " MB\n"
+            "Scratch suballocator memory:            " + std::to_string(m_scratchPool->getSize()         / 1000000.0f) + " MB\n"
+            "Update suballocator memory:             " + std::to_string(m_updatePool->getSize()          / 1000000.0f) + " MB\n"
+            "Compaction fragmented percentage:       " + std::to_string(fragmentedRatio                  * 100.0f)     + " %%\n"
         );
 
         return m_buildLogger.c_str();
@@ -406,6 +467,9 @@ namespace rtxmu
 
             // Tag as compaction complete
             accelStruct->isCompacted = true;
+
+            std::string log = "RTXMU Copy Compaction " + std::to_string(accelStructId) + "\n";
+            Logger::logDebug(log.c_str());
         }
     }
 
@@ -420,7 +484,7 @@ namespace rtxmu
             if ((accelStruct->resultGpuMemory.subBlock != nullptr) &&
                 (accelStruct->resultGpuMemory.subBlock->isFree() == false))
             {
-                m_resultPool->free(accelStruct->resultGpuMemory.subBlock);
+                m_transientResultPool->free(accelStruct->resultGpuMemory.subBlock);
             }
             if ((accelStruct->compactionSizeGpuMemory.subBlock != nullptr) &&
                 (accelStruct->compactionSizeGpuMemory.subBlock->isFree() == false))
@@ -432,6 +496,9 @@ namespace rtxmu
             {
                 m_compactionSizeCpuPool->free(accelStruct->compactionSizeCpuMemory.subBlock);
             }
+
+            std::string log = "RTXMU Garbage Collection For Compacted " + std::to_string(accelStructId) + "\n";
+            Logger::logDebug(log.c_str());
         }
 
         // Be cautious here and if the acceleration structure did not request compaction then
@@ -441,6 +508,9 @@ namespace rtxmu
             (accelStruct->scratchGpuMemory.subBlock->isFree() == false))
         {
             m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
+
+            std::string log = "RTXMU Garbage Collection Deleting Scratch " + std::to_string(accelStructId) + "\n";
+            Logger::logDebug(log.c_str());
         }
     }
 
@@ -467,7 +537,14 @@ namespace rtxmu
         if ((accelStruct->resultGpuMemory.subBlock != nullptr) &&
             (accelStruct->resultGpuMemory.subBlock->isFree() == false))
         {
-            m_resultPool->free(accelStruct->resultGpuMemory.subBlock);
+            if (accelStruct->requestedCompaction)
+            {
+                m_transientResultPool->free(accelStruct->resultGpuMemory.subBlock);
+            }
+            else
+            {
+                m_resultPool->free(accelStruct->resultGpuMemory.subBlock);
+            }
             accelStruct->resultGpuMemory.subBlock = nullptr;
         }
         if ((accelStruct->compactionGpuMemory.subBlock != nullptr) &&
@@ -478,5 +555,23 @@ namespace rtxmu
         }
 
         ReleaseAccelStructId(accelStructId);
+
+        std::string log = "RTXMU Remove " + std::to_string(accelStructId) + "\n";
+        Logger::logDebug(log.c_str());
+    }
+
+    Stats DxAccelStructManager::GetResultPoolMemoryStats()
+    {
+        return m_resultPool->getStats();
+    }
+
+    Stats DxAccelStructManager::GetTransientResultPoolMemoryStats()
+    {
+        return m_transientResultPool->getStats();
+    }
+
+    Stats DxAccelStructManager::GetCompactionPoolMemoryStats()
+    {
+        return m_compactionPool->getStats();
     }
 }

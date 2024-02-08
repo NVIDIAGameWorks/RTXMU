@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -21,7 +21,7 @@
 * SOFTWARE.
 */
 
-#include <rtxmu/D3D12Suballocator.h>
+#include "rtxmu/D3D12Suballocator.h"
 
 namespace rtxmu
 {
@@ -40,13 +40,14 @@ namespace rtxmu
         void D3D12Block::allocate(Allocator*            allocator,
                                   uint64_t              size,
                                   D3D12_HEAP_TYPE       heapType,
-                                  D3D12_RESOURCE_STATES state)
+                                  D3D12_RESOURCE_STATES state,
+                                  uint32_t              alignment)
         {
             ID3D12Device5* device = allocator->device;
 
             D3D12_RESOURCE_DESC desc = {};
             desc.Dimension           = D3D12_RESOURCE_DIMENSION_BUFFER;
-            desc.Alignment           = 0;
+            desc.Alignment           = alignment;
             desc.Width               = size;
             desc.Height              = 1;
             desc.DepthOrArraySize    = 1;

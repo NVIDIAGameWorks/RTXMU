@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -22,14 +22,9 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
 #include <queue>
-#include <iostream>
 #include <mutex>
-#include <map>
-#include <set>
-#include <assert.h>
+#include "Logger.h"
 
 namespace rtxmu
 {
@@ -38,6 +33,7 @@ namespace rtxmu
     constexpr uint32_t AccelStructAlignment                 = 256;
     constexpr uint64_t CompactionSizeSuballocationBlockSize = 65536;
     constexpr uint64_t DefaultSuballocatorBlockSize         = 8388608;
+    constexpr uint64_t ReservedId                           = 0;
 
     struct AccelerationStructure
     {
@@ -54,12 +50,17 @@ namespace rtxmu
     {
     public:
 
-        AccelStructManager() :
+        AccelStructManager(Logger::Level logVerbosity) :
         m_buildLogger(""),
         m_suballocationBlockSize(0),
         m_totalUncompactedMemory(0),
         m_totalCompactedMemory(0)
-        {}
+        {
+            // Reserve acceleration structure index 0 to not be used
+            m_asBufferBuildQueue.resize(1, nullptr);
+
+            Logger::setLoggerSettings(logVerbosity);
+        }
 
         ~AccelStructManager()
         {
@@ -124,8 +125,11 @@ namespace rtxmu
 
         std::vector<T*> m_asBufferBuildQueue;
         std::queue<uint64_t> m_asIdFreeList;
-        uint64_t m_asId = 0;
+        // Increment by 1 the asId by the reserved id that can't be used
+        uint64_t m_asId = ReservedId + 1;
 
         std::mutex m_threadSafeLock;
+
+        Logger::Level m_logVerbosity;
     };
 }

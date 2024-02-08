@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -40,8 +40,12 @@ namespace rtxmu
     {
     public:
 
-        VkAccelStructManager(const vk::Instance& instance, const vk::Device& device, const vk::PhysicalDevice& physicalDevice);
-        
+        VkAccelStructManager(const vk::Instance&       instance,
+                             const vk::Device&         device,
+                             const vk::PhysicalDevice& physicalDevice,
+                             Logger::Level             verbosity = Logger::Level::DISABLED,
+                             bool                      experimentalBuildFeature = false);
+
         // Initializes suballocator block size
         void Initialize(uint32_t suballocatorBlockSize = DefaultSuballocatorBlockSize);
 
@@ -90,7 +94,15 @@ namespace rtxmu
 
         vk::AccelerationStructureKHR GetAccelerationStruct(const uint64_t accelStructId);
 
+        vk::AccelerationStructureKHR GetAccelerationStructCompacted(const uint64_t accelStructId);
+
         vk::Buffer GetBuffer(const uint64_t accelStructId);
+
+        // Returns prebuild size of allocation
+        uint64_t GetInitialAccelStructSize(const uint64_t accelStructId);
+
+        // Returns size of compacted allocation
+        uint64_t GetCompactedAccelStructSize(const uint64_t accelStructId);
 
         // Returns whether the acceleration structure requested compaction
         bool GetRequestedCompaction(const uint64_t accelStructId);
@@ -98,8 +110,19 @@ namespace rtxmu
         // Returns whether the acceleration structure is ready in compaction state
         bool GetCompactionComplete(const uint64_t accelStructId);
 
+        // Returns if acceleration structure is being tracked
+        bool IsValid(const uint64_t accelStructId);
+
         // Returns a log containing memory consumption information
         const char* GetLog();
+
+        Stats GetResultPoolMemoryStats();
+
+        Stats GetTransientResultPoolMemoryStats();
+
+        Stats GetCompactionPoolMemoryStats();
+
+        static void logCallbackFunction(const char* msg);
 
     private:
 
@@ -113,6 +136,7 @@ namespace rtxmu
         std::unique_ptr<Suballocator<Allocator, VkScratchBlock>>     m_scratchPool;
         std::unique_ptr<Suballocator<Allocator, VkScratchBlock>>     m_updatePool;
         std::unique_ptr<Suballocator<Allocator, VkAccelStructBlock>> m_resultPool;
+        std::unique_ptr<Suballocator<Allocator, VkAccelStructBlock>> m_transientResultPool;
         std::unique_ptr<Suballocator<Allocator, VkAccelStructBlock>> m_compactionPool;
         std::unique_ptr<Suballocator<Allocator, VkQueryBlock>>       m_queryCompactionSizePool;
     };

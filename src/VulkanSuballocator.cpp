@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -20,7 +20,7 @@
 * SOFTWARE.
 */
 
-#include <rtxmu/VulkanSuballocator.h>
+#include "rtxmu/VulkanSuballocator.h"
 
 namespace rtxmu
 {
@@ -76,7 +76,8 @@ namespace rtxmu
                            vk::DeviceSize          size,
                            vk::BufferUsageFlags    usageFlags,
                            vk::MemoryPropertyFlags propFlags,
-                           vk::MemoryHeapFlags     heapflags)
+                           vk::MemoryHeapFlags     heapflags,
+                           uint32_t                alignment)
     {
         auto bufferInfo = vk::BufferCreateInfo()
             .setSize(size)
@@ -87,6 +88,14 @@ namespace rtxmu
 
         vk::MemoryRequirements memoryRequirements = allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
         uint32_t memoryTypeIndex = getMemoryIndex(allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
+
+        // Passed in alignment needs to be the same for alignment returned by getBufferMemoryRequirements
+        if (memoryRequirements.alignment != alignment)
+        {
+            std::string log = "Alignment doesn't match for allocation\n";
+            Logger::logFatal(log.c_str());
+            assert(0);
+        }
 
         auto memoryAllocateFlags = vk::MemoryAllocateFlagsInfo()
             .setFlags(vk::MemoryAllocateFlagBits::eDeviceAddress);

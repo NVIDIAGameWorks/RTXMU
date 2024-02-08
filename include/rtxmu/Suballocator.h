@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2021 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -23,28 +23,28 @@
 #pragma once
 
 #include <vector>
-#include <cstdint>
 #include <mutex>
+#include "Logger.h"
 
 namespace rtxmu
 {
-    enum class ResultCode : uint8_t
+    // All sizes are expressed in bytes
+    struct Stats
     {
-        Ok = 0,
-        OutOfMemoryCPU,
-        OutOfMemoryGPU,
-        InvalidSuballocationAlignment,
-        InvalidBlockAlignment
+        uint64_t alignmentSavings = 0;
+        uint64_t totalResidentMemorySize = 0;
+        uint64_t unusedSize = 0;
+        double   fragmentation = 0.0;
     };
 
     // Defines the functions that need to be implemented by the templated Block type
     class BlockInterface
     {
     public:
-        ResultCode allocate(uint64_t size) = delete;
-        uint32_t   getAlignment()          = delete;
-        void       free()                  = delete;
-        uint32_t   getVMA()                = delete;
+        void     allocate(uint64_t size) = delete;
+        uint32_t getAlignment()          = delete;
+        void     free()                  = delete;
+        uint32_t getVMA()                = delete;
     };
 
     // Block type default implementation to force client to implement
@@ -65,6 +65,12 @@ namespace rtxmu
             {
                 SubBlock* subBlock = reinterpret_cast<SubBlock*>(this);
                 return subBlock->size;
+            }
+
+            uint64_t getUnusedSize()
+            {
+                SubBlock* subBlock = reinterpret_cast<SubBlock*>(this);
+                return subBlock->unusedSize;
             }
 
             bool isFree()
@@ -104,15 +110,15 @@ namespace rtxmu
             m_blocks.clear();
         }
 
-        SubAllocation allocate(uint64_t size)
+        SubAllocation allocate(uint64_t unalignedSize)
         {
             std::lock_guard<std::mutex> guard(m_threadSafeLock);
 
             // Align allocation
-            const uint64_t sizeInBytes = align(size, m_allocationAlignment);
+            const uint64_t sizeInBytes = align(unalignedSize, m_allocationAlignment);
 
-            // If no previous blocks exist 
-            if (m_blocks.size() == 0)
+            // If no previous blocks exist and if the suballocation size isn't larger than block size
+            if (m_blocks.size() == 0 && sizeInBytes <= m_blockSize)
             {
                 uint64_t newBlockSize = sizeInBytes > m_blockSize ? sizeInBytes : m_blockSize;
                 createBlock(newBlockSize);
@@ -127,14 +133,19 @@ namespace rtxmu
             if (sizeInBytes > m_blockSize)
             {
                 createBlock(sizeInBytes);
-                BlockDesc* block    = m_blocks[m_blocks.size() - 1];
-                subBlock->blockDesc = block;
-                subBlock->size      = sizeInBytes;
-                subBlock->offset    = block->currentOffset;
+                BlockDesc* block     = m_blocks[m_blocks.size() - 1];
+                subBlock->blockDesc  = block;
+                subBlock->size       = sizeInBytes;
+                subBlock->offset     = block->currentOffset;
+
+                // Capture alignment padding waste
+                subBlock->unusedSize = sizeInBytes - unalignedSize;
 
                 const uint64_t offsetInBytes = block->currentOffset + sizeInBytes;
                 block->currentOffset         = offsetInBytes;
                 block->numSubBlocks++;
+
+                Logger::logDebug("RTXMU Allocation Too Large and Can't Suballocate\n");
             }
             else
             {
@@ -159,6 +170,12 @@ namespace rtxmu
                             // Only ever change the memory size if this is a new allocation
                             subBlock->size = sizeInBytes;
                             subBlock->offset = block->currentOffset;
+                            // Capture alignment padding waste
+                            subBlock->unusedSize = sizeInBytes - unalignedSize;
+
+                            const uint64_t memoryAlignedSize = align(subBlock->size, m_blocks[blockIndex]->block.getAlignment());
+                            m_stats.alignmentSavings += (memoryAlignedSize - subBlock->size);
+
                             block->currentOffset = offsetInBytes;
                             block->numSubBlocks++;
                         }
@@ -181,10 +198,6 @@ namespace rtxmu
                     if (continueBlockSearch == false)
                     {
                         subBlock->blockDesc = m_blocks[blockIndex];
-
-                        const uint64_t memoryAlignedSize = align(subBlock->size, m_blocks[blockIndex]->block.getAlignment());
-                        m_stats.alignmentSavings += (memoryAlignedSize - subBlock->size);
-
                         break;
                     }
                 }
@@ -205,8 +218,6 @@ namespace rtxmu
                 if (blockDesc->block.getVMA() == subBlock->blockDesc->block.getVMA())
                 {
                     const uint64_t memoryAlignedSize = align(subBlock->size, blockDesc->block.getAlignment());
-                    m_stats.alignmentSavings        -= (memoryAlignedSize - subBlock->size);
-                    m_stats.fragmentedSize          -= (subBlock->unusedSize);
 
                     subBlock->isFree = true;
 
@@ -215,6 +226,8 @@ namespace rtxmu
                     {
                         blockDesc->block.free(m_allocator);
                         m_blocks.erase(m_blocks.begin() + blockIndex);
+
+                        Logger::logDebug("RTXMU Deallocation of oversized block\n");
                     }
                     else
                     {
@@ -224,6 +237,8 @@ namespace rtxmu
                                                          subBlock->size };
 
                         blockDesc->freeSubBlocks.push_back(freeSubBlock);
+
+                        m_stats.alignmentSavings -= (memoryAlignedSize - subBlock->size);
 
                         blockDesc->numSubBlocks--;
 
@@ -242,15 +257,6 @@ namespace rtxmu
             }
         }
 
-        // All sizes are expressed in bytes
-        struct Stats
-        {
-            uint64_t alignmentSavings = 0;
-            uint64_t fragmentedSize = 0;
-        };
-
-        Stats const& getStats() const { return m_stats; }
-
         uint64_t getSize()
         {
             uint64_t size = 0;
@@ -259,6 +265,47 @@ namespace rtxmu
                 size += blockDesc->size;
             }
             return size;
+        }
+
+        //https://asawicki.info/news_1757_a_metric_for_memory_fragmentation
+        double getFragmentation(uint64_t& totalUnusedMemory)
+        {
+            uint64_t quality = 0;
+            totalUnusedMemory = 0;
+            for (auto blockDesc : m_blocks)
+            {
+                for (SubBlock& freeSubBlock : blockDesc->freeSubBlocks)
+                {
+                    quality       += freeSubBlock.size * freeSubBlock.size;
+                    totalUnusedMemory += freeSubBlock.size;
+                }
+
+                // Current offset free block at the tail end
+                uint64_t tailFreeSubBlock = blockDesc->size - blockDesc->currentOffset;
+
+                quality += tailFreeSubBlock * tailFreeSubBlock;
+                totalUnusedMemory += tailFreeSubBlock;
+            }
+
+            if (quality == 0 || totalUnusedMemory == 0)
+            {
+                return 0.0;
+            }
+
+            double qualityPercent = sqrt(static_cast<double>(quality)) / static_cast<double>(totalUnusedMemory);
+            return (1.0 - (qualityPercent * qualityPercent)) * 100.0;
+        }
+
+        Stats const getStats()
+        {
+            Stats stats;
+            stats.totalResidentMemorySize = getSize();
+            stats.alignmentSavings = m_stats.alignmentSavings;
+            uint64_t totalUnusedSize;
+            // Calculate fragmentation and total free blocks at the same time
+            stats.fragmentation = getFragmentation(totalUnusedSize);
+            stats.unusedSize = totalUnusedSize;
+            return stats;
         }
 
         const std::vector<BlockDesc*>& getBlocks()
@@ -276,7 +323,7 @@ namespace rtxmu
         void createBlock(uint64_t blockAllocationSize)
         {
             BlockDesc* newBlock = new BlockDesc{};
-            newBlock->block.allocate(m_allocator, blockAllocationSize);
+            newBlock->block.allocate(m_allocator, blockAllocationSize, std::to_string(m_blocks.size()));
             newBlock->size = blockAllocationSize;
             m_blocks.push_back(newBlock);
         }
@@ -306,6 +353,9 @@ namespace rtxmu
                         // Remove from the list
                         suballocatorBlock->freeSubBlocks.erase(freeSubBlockIter);
                         suballocatorBlock->numSubBlocks++;
+
+                        Logger::logDebug("RTXMU Suballocator Perfect Match\n");
+
                         break;
                     }
                     else
@@ -328,19 +378,56 @@ namespace rtxmu
                 (minUnusedMemoryIter != suballocatorBlock->freeSubBlocks.end()) &&
                 (minUnusedMemorySubBlock < 2 * sizeInBytes))
             {
+
+                const uint64_t memoryAlignedSize = align(minUnusedMemoryIter->size, suballocatorBlock->block.getAlignment());
+                m_stats.alignmentSavings -= (memoryAlignedSize - minUnusedMemoryIter->size);
+
                 // Keep previous allocation size
-                subBlock->size    = minUnusedMemoryIter->size;
-                subBlock->offset  = minUnusedMemoryIter->offset;
+                subBlock->size = minUnusedMemoryIter->size;
+                subBlock->offset = minUnusedMemoryIter->offset;
                 foundFreeSubBlock = true;
 
                 // Remove from the list
                 suballocatorBlock->freeSubBlocks.erase(minUnusedMemoryIter);
                 suballocatorBlock->numSubBlocks++;
 
+                const uint64_t newMemoryAlignedSize = align(sizeInBytes, suballocatorBlock->block.getAlignment());
+                // Capture the wasted memory from the original allocation because suballoc size does not change
                 subBlock->unusedSize = subBlock->size - sizeInBytes;
-                m_stats.fragmentedSize += subBlock->unusedSize;
+                m_stats.alignmentSavings += (newMemoryAlignedSize - sizeInBytes);
+
+                Logger::logDebug("RTXMU Suballocator Suboptimal Match with wasted memory\n");
             }
 
+#if MERGE_FREE_BLOCKS
+            // If no free blocks work then lets merge free blocks to help if we have more than 1
+            if (foundFreeSubBlock == false && suballocatorBlock->freeSubBlocks.size() > 1)
+            {
+                std::vector<SubBlock>& freeBlocks = suballocatorBlock->freeSubBlocks;
+                int currentSubBlock = 0;
+                int neighboringSubBlock = 0;
+                while (neighboringSubBlock < freeBlocks.size())
+                {
+                    uint64_t currentOffset = freeBlocks[currentSubBlock].offset + (freeBlocks[currentSubBlock].size + freeBlocks[currentSubBlock].unusedSize);
+                    if (currentOffset == freeBlocks[neighboringSubBlock + 1].offset)
+                    {
+                        // Add size from the next neighboring block but keep same offset
+                        freeBlocks[currentSubBlock].size += freeBlocks[neighboringSubBlock + 1].size;
+                        freeBlocks[currentSubBlock].unusedSize += freeBlocks[neighboringSubBlock + 1].unusedSize;
+
+                        freeBlocks[neighboringSubBlock + 1].offset = -1;
+                        freeBlocks[neighboringSubBlock + 1].size = 0;
+
+                        Logger::logDebug("RTXMU Suballocator Merging Free Blocks\n");
+                    }
+                    else
+                    {
+                        currentSubBlock++;
+                    }
+                    neighboringSubBlock++;
+                }
+            }
+#endif
             return foundFreeSubBlock;
         }
 
