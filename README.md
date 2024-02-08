@@ -3,6 +3,9 @@
 Please read the NVIDIA Blog post on how to use RTXMU:
 https://developer.nvidia.com/blog/reducing-acceleration-structure-memory-with-nvidia-rtxmu/
 
+Presentation with slides about RTXMU:
+https://www.nvidia.com/en-us/on-demand/session/gdc21-gdc21-01/
+
 To generate a test project:
 1) Clone me
 2) at root directory mkdir build
