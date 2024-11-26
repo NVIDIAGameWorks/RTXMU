@@ -42,8 +42,7 @@ namespace rtxmu
     public:
 
         DxAccelStructManager(ID3D12Device5* device,
-                             Logger::Level  verbosity = Logger::Level::DISABLED,
-                             bool           experimentalBuildFeature = false);
+                             Level          verbosity = Level::DISABLED);
 
         // Initializes suballocator block size
         void Initialize(uint32_t suballocatorBlockSize = DefaultSuballocatorBlockSize);

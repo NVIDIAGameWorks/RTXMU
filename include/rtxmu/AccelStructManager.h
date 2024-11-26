@@ -24,6 +24,7 @@
 
 #include <queue>
 #include <mutex>
+#include <cinttypes>
 #include "Logger.h"
 
 namespace rtxmu
@@ -50,7 +51,7 @@ namespace rtxmu
     {
     public:
 
-        AccelStructManager(Logger::Level logVerbosity) :
+        AccelStructManager(Level logVerbosity) :
         m_buildLogger(""),
         m_suballocationBlockSize(0),
         m_totalUncompactedMemory(0),
@@ -130,6 +131,6 @@ namespace rtxmu
 
         std::mutex m_threadSafeLock;
 
-        Logger::Level m_logVerbosity;
+        Level m_logVerbosity;
     };
 }

@@ -24,9 +24,15 @@
 
 namespace rtxmu
 {
-    vk::DispatchLoaderDynamic VkBlock::m_dispatchLoader;
+    Allocator* VkBlock::m_allocator = nullptr;
+    void VkBlock::setAllocator(Allocator* allocator)
+    {
+        m_allocator = allocator;
+    }
 
-    vk::DispatchLoaderDynamic& VkBlock::getDispatchLoader()
+    VkDispatchLoaderDynamic VkBlock::m_dispatchLoader;
+
+    VkDispatchLoaderDynamic& VkBlock::getDispatchLoader()
     {
         return m_dispatchLoader;
     }
@@ -72,8 +78,7 @@ namespace rtxmu
         return m_buffer;
     }
 
-    void VkBlock::allocate(Allocator*              allocator,
-                           vk::DeviceSize          size,
+    void VkBlock::allocate(vk::DeviceSize          size,
                            vk::BufferUsageFlags    usageFlags,
                            vk::MemoryPropertyFlags propFlags,
                            vk::MemoryHeapFlags     heapflags,
@@ -84,17 +89,19 @@ namespace rtxmu
             .setUsage(usageFlags)
             .setSharingMode(vk::SharingMode::eExclusive);
 
-        m_buffer = allocator->device.createBuffer(bufferInfo, nullptr, VkBlock::getDispatchLoader());
+        m_buffer = m_allocator->device.createBuffer(bufferInfo, nullptr, VkBlock::getDispatchLoader());
 
-        vk::MemoryRequirements memoryRequirements = allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
-        uint32_t memoryTypeIndex = getMemoryIndex(allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
+        vk::MemoryRequirements memoryRequirements = m_allocator->device.getBufferMemoryRequirements(m_buffer, m_dispatchLoader);
+        uint32_t memoryTypeIndex = getMemoryIndex(m_allocator->physicalDevice, memoryRequirements.memoryTypeBits, propFlags, heapflags);
 
         // Passed in alignment needs to be the same for alignment returned by getBufferMemoryRequirements
         if (memoryRequirements.alignment != alignment)
         {
-            std::string log = "Alignment doesn't match for allocation\n";
-            Logger::logFatal(log.c_str());
-            assert(0);
+            if (Logger::isEnabled(Level::FATAL))
+            {
+                Logger::log(Level::FATAL, "Alignment doesn't match for allocation\n");
+                assert(0);
+            }
         }
 
         auto memoryAllocateFlags = vk::MemoryAllocateFlagsInfo()
@@ -105,14 +112,14 @@ namespace rtxmu
             .setAllocationSize(size)
             .setMemoryTypeIndex(memoryTypeIndex);
 
-        m_memory = allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
-        allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
+        m_memory = m_allocator->device.allocateMemory(memoryInfo, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.bindBufferMemory(m_buffer, m_memory, 0, VkBlock::getDispatchLoader());
     }
 
-    void VkBlock::free(Allocator* allocator)
+    void VkBlock::free()
     {
-        allocator->device.destroyBuffer(m_buffer, nullptr, VkBlock::getDispatchLoader());
-        allocator->device.freeMemory(m_memory, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.destroyBuffer(m_buffer, nullptr, VkBlock::getDispatchLoader());
+        m_allocator->device.freeMemory(m_memory, nullptr, VkBlock::getDispatchLoader());
     }
 
     uint64_t VkBlock::getVMA() { return (uint64_t)(VkDeviceMemory)(m_memory); }

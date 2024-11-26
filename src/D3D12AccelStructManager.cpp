@@ -26,8 +26,7 @@ namespace rtxmu
 {
 
     DxAccelStructManager::DxAccelStructManager(ID3D12Device5* device,
-                                               Logger::Level  verbosity,
-                                               bool           experimentalBuildFeature) :
+                                               Level          verbosity) :
         AccelStructManager(verbosity)
     {
         m_allocator.device = device;
@@ -93,8 +92,12 @@ namespace rtxmu
 
                 commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
 
-                std::string log = "RTXMU Update/Refit Build " + std::to_string(accelStructId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Update/Refit Build %" PRIu64 "\n", accelStructId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
             else
             {
@@ -111,8 +114,10 @@ namespace rtxmu
                     accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes)
                 {
 
-                    std::string log = "Rebuild memory size is too small so reallocate and leak memory\n";
-                    Logger::logWarning(log.c_str());
+                    if (Logger::isEnabled(Level::WARN))
+                    {
+                        Logger::log(Level::WARN, "Rebuild memory size is too small so reallocate and leak memory\n");
+                    }
 
                     accelStruct->resultGpuMemory = m_resultPool->allocate(prebuildInfo.ResultDataMaxSizeInBytes);
 
@@ -126,9 +131,11 @@ namespace rtxmu
                     if (accelStruct->scratchGpuMemory.subBlock->getSize() < prebuildInfo.ScratchDataSizeInBytes ||
                         accelStruct->resultGpuMemory.subBlock->getSize() < prebuildInfo.ResultDataMaxSizeInBytes)
                     {
-                        std::string log = "Rebuild memory size is too small after reallocating\n";
-                        Logger::logFatal(log.c_str());
-                        assert(0);
+                        if (Logger::isEnabled(Level::FATAL))
+                        {
+                            Logger::log(Level::FATAL, "Rebuild memory size is too small after reallocating\n");
+                            assert(0);
+                        }
                     }
                 }
 
@@ -148,9 +155,12 @@ namespace rtxmu
 
                 commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
 
-                std::string log = "RTXMU Rebuild " + std::to_string(accelStructId) + "\n";
-                Logger::logDebug(log.c_str());
-
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Rebuild %" PRIu64 "\n", accelStructId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
         }
     }
@@ -231,8 +241,12 @@ namespace rtxmu
                 // Suballocate the readback memory
                 accelStruct->compactionSizeCpuMemory = m_compactionSizeCpuPool->allocate(SizeOfCompactionDescriptor);
 
-                std::string log = "RTXMU Initial Build Enabled Compaction " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Initial Build Enabled Compaction %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
             else
             {
@@ -243,8 +257,12 @@ namespace rtxmu
                                                                   0,
                                                                   nullptr);
 
-                std::string log = "RTXMU Initial Build Disabled Compaction " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Initial Build Disabled Compaction %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
         }
     }
@@ -468,8 +486,12 @@ namespace rtxmu
             // Tag as compaction complete
             accelStruct->isCompacted = true;
 
-            std::string log = "RTXMU Copy Compaction " + std::to_string(accelStructId) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Copy Compaction %" PRIu64 "\n", accelStructId);
+                Logger::log(Level::DBG, buf);
+            }
         }
     }
 
@@ -497,8 +519,12 @@ namespace rtxmu
                 m_compactionSizeCpuPool->free(accelStruct->compactionSizeCpuMemory.subBlock);
             }
 
-            std::string log = "RTXMU Garbage Collection For Compacted " + std::to_string(accelStructId) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Garbage Collection For Compacted %" PRIu64 "\n", accelStructId);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
         // Be cautious here and if the acceleration structure did not request compaction then
@@ -509,8 +535,12 @@ namespace rtxmu
         {
             m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
 
-            std::string log = "RTXMU Garbage Collection Deleting Scratch " + std::to_string(accelStructId) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Garbage Collection Deleting Scratch %" PRIu64 "\n", accelStructId);
+                Logger::log(Level::DBG, buf);
+            }
         }
     }
 
@@ -556,8 +586,12 @@ namespace rtxmu
 
         ReleaseAccelStructId(accelStructId);
 
-        std::string log = "RTXMU Remove " + std::to_string(accelStructId) + "\n";
-        Logger::logDebug(log.c_str());
+        if (Logger::isEnabled(Level::DBG))
+        {
+            char buf[128];
+            snprintf(buf, sizeof buf, "RTXMU Remove %" PRIu64 "\n", accelStructId);
+            Logger::log(Level::DBG, buf);
+        }
     }
 
     Stats DxAccelStructManager::GetResultPoolMemoryStats()

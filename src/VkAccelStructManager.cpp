@@ -27,8 +27,7 @@ namespace rtxmu
     VkAccelStructManager::VkAccelStructManager(const vk::Instance&       instance,
                                                const vk::Device&         device,
                                                const vk::PhysicalDevice& physicalDevice,
-                                               Logger::Level             verbosity,
-                                               bool                      experimentalBuildFeature) :
+                                               Level                     verbosity) :
         AccelStructManager(verbosity)
     {
         m_allocator.instance = instance;
@@ -58,7 +57,7 @@ namespace rtxmu
         // Load dispatch table if not loaded
         if (VkBlock::getDispatchLoader().vkGetInstanceProcAddr == nullptr)
         {
-            const vk::DynamicLoader dl;
+            VkDynamicLoader dl;
             VkBlock::getDispatchLoader().init(m_allocator.instance, m_allocator.device, dl);
         }
     }
@@ -100,8 +99,12 @@ namespace rtxmu
                 geomInfo.dstAccelerationStructure = GetAccelerationStruct(asId);
                 geomInfo.srcAccelerationStructure = GetAccelerationStruct(asId);
 
-                std::string log = "RTXMU Update/Refit Build " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Update/Refit Build %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
             else
             {
@@ -112,8 +115,10 @@ namespace rtxmu
                 if (accelStruct->scratchGpuMemory.subBlock->getSize() < buildSizeInfo.buildScratchSize ||
                     accelStruct->resultGpuMemory.subBlock->getSize() < buildSizeInfo.accelerationStructureSize)
                 {
-                    std::string log = "Rebuild memory size is too small so reallocate and leak memory\n";
-                    Logger::logWarning(log.c_str());
+                    if (Logger::isEnabled(Level::WARN))
+                    {
+                        Logger::log(Level::WARN, "Rebuild memory size is too small so reallocate and leak memory\n");
+                    }
 
                     accelStruct->resultGpuMemory = m_resultPool->allocate(buildSizeInfo.accelerationStructureSize);
 
@@ -127,9 +132,11 @@ namespace rtxmu
                     if (accelStruct->scratchGpuMemory.subBlock->getSize() < buildSizeInfo.buildScratchSize ||
                         accelStruct->resultGpuMemory.subBlock->getSize() < buildSizeInfo.accelerationStructureSize)
                     {
-                        std::string log = "Rebuild memory size is too small after reallocating\n";
-                        Logger::logFatal(log.c_str());
-                        assert(0);
+                        if (Logger::isEnabled(Level::FATAL))
+                        {
+                            Logger::log(Level::FATAL, "Rebuild memory size is too small after reallocating\n");
+                            assert(0);
+                        }
                     }
 
                     auto asCreateInfo = vk::AccelerationStructureCreateInfoKHR()
@@ -158,8 +165,12 @@ namespace rtxmu
                 geomInfo.scratchData.deviceAddress = VkBlock::getDeviceAddress(m_allocator.device, accelStruct->scratchGpuMemory.block, accelStruct->scratchGpuMemory.offset);
                 geomInfo.dstAccelerationStructure = accelStruct->resultGpuMemory.block.m_asHandle;
 
-                std::string log = "RTXMU Rebuild " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Rebuild %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
 
         }
@@ -228,8 +239,12 @@ namespace rtxmu
 
                 accelStruct->queryCompactionSizeMemory = m_queryCompactionSizePool->allocate(SizeOfCompactionDescriptor);
 
-                std::string log = "RTXMU Initial Build Enabled Compaction " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Initial Build Enabled Compaction %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
             else
             {
@@ -237,8 +252,12 @@ namespace rtxmu
                 accelStruct->isCompacted = false;
                 accelStruct->requestedCompaction = false;
 
-                std::string log = "RTXMU Initial Build Disabled Compaction " + std::to_string(asId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Initial Build Disabled Compaction %" PRIu64 "\n", asId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
         }
 
@@ -340,8 +359,12 @@ namespace rtxmu
                 accelStruct->isCompacted = true;
                 compactionCopiesPerformed = true;
 
-                std::string log = "RTXMU Copy Compaction " + std::to_string(accelStructId) + "\n";
-                Logger::logDebug(log.c_str());
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    char buf[128];
+                    snprintf(buf, sizeof buf, "RTXMU Copy Compaction %" PRIu64 "\n", accelStructId);
+                    Logger::log(Level::DBG, buf);
+                }
             }
         }
         if (compactionCopiesPerformed)
@@ -533,8 +556,12 @@ namespace rtxmu
                 resultAS = nullptr;
             }
 
-            std::string log = "RTXMU Garbage Collection For Compacted " + std::to_string(accelStructId) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Garbage Collection For Compacted %" PRIu64 "\n", accelStructId);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
         // Be cautious here and if the acceleration structure did not request compaction then
@@ -545,8 +572,12 @@ namespace rtxmu
         {
             m_scratchPool->free(accelStruct->scratchGpuMemory.subBlock);
 
-            std::string log = "RTXMU Garbage Collection Deleting Scratch " + std::to_string(accelStructId) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Garbage Collection Deleting Scratch %" PRIu64 "\n", accelStructId);
+                Logger::log(Level::DBG, buf);
+            }
         }
     }
 
@@ -606,8 +637,12 @@ namespace rtxmu
 
         ReleaseAccelStructId(accelStructId);
 
-        std::string log = "RTXMU Remove " + std::to_string(accelStructId) + "\n";
-        Logger::logDebug(log.c_str());
+        if (Logger::isEnabled(Level::DBG))
+        {
+            char buf[128];
+            snprintf(buf, sizeof buf, "RTXMU Remove %" PRIu64 "\n", accelStructId);
+            Logger::log(Level::DBG, buf);
+        }
     }
 
     Stats VkAccelStructManager::GetResultPoolMemoryStats()

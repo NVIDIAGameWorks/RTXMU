@@ -20,30 +20,33 @@
 * SOFTWARE.
 */
 
-#pragma once
+#include "rtxmu/Logger.h"
 
 // Logger function callback which allows client to implement logging
 namespace rtxmu
 {
-    enum class Level
+    Level Logger::s_loggerVerbosity = Level::DISABLED;
+    void (*Logger::s_loggerCallback)(const char*) = nullptr;
+    void Logger::setLoggerSettings(Level verbosity)
     {
-        DISABLED = 0,
-        FATAL,
-        ERR,
-        WARN,
-        INFO,
-        DBG
-    };
-
-    class Logger
+        s_loggerVerbosity = verbosity;
+    }
+    void Logger::setLoggerCallback(void (*loggerCallback)(const char*))
     {
-    public:
-
-        static Level s_loggerVerbosity;
-        static void (*s_loggerCallback)(const char*);
-        static void setLoggerSettings(Level verbosity);
-        static void setLoggerCallback(void (*loggerCallback)(const char*));
-        static void log(Level verbosity, const char* msg);
-        static bool isEnabled(Level verbosity);
-    };
+        s_loggerCallback = loggerCallback;
+    }
+    void Logger::log(Level verbosity, const char* msg)
+    {
+        if (verbosity <= s_loggerVerbosity)
+        {
+            if (s_loggerCallback != nullptr)
+            {
+                s_loggerCallback(msg);
+            }
+        }
+    }
+    bool Logger::isEnabled(Level verbosity)
+    {
+        return (verbosity <= s_loggerVerbosity) ? true : false;
+    }
 }// end rtxmu namespace

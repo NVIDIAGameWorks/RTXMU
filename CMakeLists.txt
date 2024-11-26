@@ -40,7 +40,8 @@ set (SRC_FILES "")
 if (RTXMU_WITH_D3D12)
 	list (APPEND SRC_FILES
 		src/D3D12Suballocator.cpp
-		src/D3D12AccelStructManager.cpp)
+		src/D3D12AccelStructManager.cpp
+		src/Logger.cpp)
 
 	list (APPEND HEADER_FILES
 		include/rtxmu/D3D12Suballocator.h
@@ -50,7 +51,8 @@ endif()
 if (RTXMU_WITH_VULKAN)
 	list (APPEND SRC_FILES
 		src/VulkanSuballocator.cpp
-		src/VkAccelStructManager.cpp)
+		src/VkAccelStructManager.cpp
+		src/Logger.cpp)
 
 	list (APPEND HEADER_FILES
 		include/rtxmu/VkAccelStructManager.h

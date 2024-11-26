@@ -28,6 +28,14 @@
 
 namespace rtxmu
 {
+#if VK_HEADER_VERSION >= 301
+    typedef vk::detail::DynamicLoader VkDynamicLoader;
+    typedef vk::detail::DispatchLoaderDynamic VkDispatchLoaderDynamic;
+#else
+    typedef vk::DynamicLoader VkDynamicLoader;
+    typedef vk::DispatchLoaderDynamic VkDispatchLoaderDynamic;
+#endif
+
     constexpr uint32_t DefaultBlockAlignment = 65536;
 
     struct Allocator
@@ -40,7 +48,7 @@ namespace rtxmu
     class VkBlock
     {
     public:
-        static vk::DispatchLoaderDynamic& getDispatchLoader();
+        static VkDispatchLoaderDynamic& getDispatchLoader();
 
         static uint32_t getMemoryIndex(const vk::PhysicalDevice& physicalDevice,
                                        uint32_t                  memoryTypeBits,
@@ -53,23 +61,27 @@ namespace rtxmu
                                                   VkBlock           block,
                                                   uint64_t          offset);
 
-        void allocate(Allocator*              allocator,
-                      vk::DeviceSize          size,
+        void allocate(vk::DeviceSize          size,
                       vk::BufferUsageFlags    usageFlags,
                       vk::MemoryPropertyFlags propFlags,
                       vk::MemoryHeapFlags     heapflags,
                       uint32_t                alignment);
 
-        void free(Allocator* allocator);
+        void free();
 
         uint64_t getVMA();
 
         vk::Buffer getBuffer();
 
+        static void setAllocator(Allocator* allocator);
+
+    protected:
+        static Allocator* m_allocator;
+
     private:
-        static vk::DispatchLoaderDynamic m_dispatchLoader;
-        vk::DeviceMemory                 m_memory = nullptr;
-        vk::Buffer                       m_buffer = nullptr;
+        static VkDispatchLoaderDynamic m_dispatchLoader;
+        vk::DeviceMemory               m_memory = nullptr;
+        vk::Buffer                     m_buffer = nullptr;
     };
 
     class VkScratchBlock : public VkBlock
@@ -82,17 +94,25 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
-            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags, alignment);
-            std::string log = "RTXMU Scratch Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags, alignment);
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Scratch Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
-            std::string log = "RTXMU Scratch Suballocator Block Release\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Scratch Suballocator Block Release\n");
+            }
+            VkBlock::free();
         }
     };
 
@@ -108,17 +128,25 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
-            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags, alignment);
-            std::string log = "RTXMU Result BLAS Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags, alignment);
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Result BLAS Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
-            std::string log = "RTXMU Result BLAS Suballocator Block Release\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Result BLAS Suballocator Block Release\n");
+            }
+            VkBlock::free();
         }
     };
 
@@ -134,17 +162,25 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
-            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags, alignment);
-            std::string log = "RTXMU Compacted BLAS Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags, alignment);
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Compacted BLAS Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
-            std::string log = "RTXMU Compacted BLAS Suballocator Block Release\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Compacted BLAS Suballocator Block Release\n");
+            }
+            VkBlock::free();
         }
     };
 
@@ -158,17 +194,25 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
-            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags, alignment);
-            std::string log = "RTXMU Readback CPU Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags, alignment);
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Readback CPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
-            std::string log = "RTXMU Readback CPU Suballocator Block Release\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Readback CPU Suballocator Block Release\n");
+            }
+            VkBlock::free();
         }
     };
 
@@ -182,17 +226,25 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
-            VkBlock::allocate(allocator, size, usageFlags, propertyFlags, heapFlags, alignment);
-            std::string log = "RTXMU Compaction Size GPU Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            VkBlock::allocate(size, usageFlags, propertyFlags, heapFlags, alignment);
+
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Compaction Size GPU Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
-            std::string log = "RTXMU Compaction Size GPU Suballocator Block Release\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                Logger::log(Level::DBG, "RTXMU Compaction Size GPU Suballocator Block Release\n");
+            }
+            VkBlock::free();
         }
     };
 
@@ -204,26 +256,34 @@ namespace rtxmu
 
         uint32_t getAlignment() { return alignment; }
 
-        void allocate(Allocator* allocator, vk::DeviceSize size, std::string name)
+        void allocate(vk::DeviceSize size, std::string name)
         {
             auto queryPoolInfo = vk::QueryPoolCreateInfo()
                 .setQueryType(vk::QueryType::eAccelerationStructureCompactedSizeKHR)
                 .setQueryCount((uint32_t)size);
 
-            queryPool = allocator->device.createQueryPool(queryPoolInfo, nullptr, VkBlock::getDispatchLoader());
+            queryPool = m_allocator->device.createQueryPool(queryPoolInfo, nullptr, VkBlock::getDispatchLoader());
 
-            std::string log = "RTXMU Compaction Query Suballocator Block Allocation of size " + std::to_string(size) + "\n";
-            Logger::logDebug(log.c_str());
+            if (Logger::isEnabled(Level::DBG))
+            {
+                char buf[128];
+                snprintf(buf, sizeof buf, "RTXMU Compaction Query Suballocator Block Allocation of size %" PRIu64 "\n", size);
+                Logger::log(Level::DBG, buf);
+            }
         }
 
-        void free(Allocator* allocator)
+        void free()
         {
             if (queryPool)
             {
-                allocator->device.destroyQueryPool(queryPool, nullptr, VkBlock::getDispatchLoader());
-                std::string log = "RTXMU Compaction Query Suballocator Block Release\n";
-                Logger::logDebug(log.c_str());
+                m_allocator->device.destroyQueryPool(queryPool, nullptr, VkBlock::getDispatchLoader());
+
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    Logger::log(Level::DBG, "RTXMU Compaction Query Suballocator Block Release\n");
+                }
             }
+            VkBlock::free();
         }
     };
 }

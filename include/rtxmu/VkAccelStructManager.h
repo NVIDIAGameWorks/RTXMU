@@ -24,6 +24,7 @@
 
 #include "AccelStructManager.h"
 #include "VulkanSuballocator.h"
+#include <memory>
 
 namespace rtxmu
 {
@@ -43,8 +44,7 @@ namespace rtxmu
         VkAccelStructManager(const vk::Instance&       instance,
                              const vk::Device&         device,
                              const vk::PhysicalDevice& physicalDevice,
-                             Logger::Level             verbosity = Logger::Level::DISABLED,
-                             bool                      experimentalBuildFeature = false);
+                             Level                     verbosity = Level::DISABLED);
 
         // Initializes suballocator block size
         void Initialize(uint32_t suballocatorBlockSize = DefaultSuballocatorBlockSize);

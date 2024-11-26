@@ -25,6 +25,8 @@
 #include <vector>
 #include <mutex>
 #include "Logger.h"
+#include <cmath>
+#include <cinttypes>
 
 namespace rtxmu
 {
@@ -37,18 +39,8 @@ namespace rtxmu
         double   fragmentation = 0.0;
     };
 
-    // Defines the functions that need to be implemented by the templated Block type
-    class BlockInterface
-    {
-    public:
-        void     allocate(uint64_t size) = delete;
-        uint32_t getAlignment()          = delete;
-        void     free()                  = delete;
-        uint32_t getVMA()                = delete;
-    };
-
     // Block type default implementation to force client to implement
-    template<typename AllocatorType, typename Block = BlockInterface>
+    template<typename AllocatorType, typename Block>
     class Suballocator
     {
         // Forward decls
@@ -94,7 +86,8 @@ namespace rtxmu
         {
             m_blockSize = blockSize;
             m_allocationAlignment = allocationAlignment;
-            m_allocator = allocator;
+
+            Block::setAllocator(allocator);
         }
 
         virtual ~Suballocator()
@@ -105,11 +98,10 @@ namespace rtxmu
 
             for (uint32_t blockIndex = 0; blockIndex < blockCount; blockIndex++)
             {
-                m_blocks[blockIndex]->block.free(m_allocator);
+                m_blocks[blockIndex]->block.free();
             }
             m_blocks.clear();
         }
-
         SubAllocation allocate(uint64_t unalignedSize)
         {
             std::lock_guard<std::mutex> guard(m_threadSafeLock);
@@ -145,7 +137,10 @@ namespace rtxmu
                 block->currentOffset         = offsetInBytes;
                 block->numSubBlocks++;
 
-                Logger::logDebug("RTXMU Allocation Too Large and Can't Suballocate\n");
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    Logger::log(Level::DBG, "RTXMU Allocation Too Large and Can't Suballocate\n");
+                }
             }
             else
             {
@@ -224,10 +219,13 @@ namespace rtxmu
                     // Release the big chunks that are a single resource
                     if (subBlock->size == blockDesc->size)
                     {
-                        blockDesc->block.free(m_allocator);
+                        blockDesc->block.free();
                         m_blocks.erase(m_blocks.begin() + blockIndex);
 
-                        Logger::logDebug("RTXMU Deallocation of oversized block\n");
+                        if (Logger::isEnabled(Level::DBG))
+                        {
+                            Logger::log(Level::DBG, "RTXMU Deallocation of oversized block\n");
+                        }
                     }
                     else
                     {
@@ -247,7 +245,7 @@ namespace rtxmu
                         if ((blockDesc->numSubBlocks == 0) &&
                             (m_blocks.size() > 1))
                         {
-                            blockDesc->block.free(m_allocator);
+                            blockDesc->block.free();
                             m_blocks.erase(m_blocks.begin() + blockIndex);
                         }
                     }
@@ -323,7 +321,7 @@ namespace rtxmu
         void createBlock(uint64_t blockAllocationSize)
         {
             BlockDesc* newBlock = new BlockDesc{};
-            newBlock->block.allocate(m_allocator, blockAllocationSize, std::to_string(m_blocks.size()));
+            newBlock->block.allocate(blockAllocationSize, std::to_string(m_blocks.size()));
             newBlock->size = blockAllocationSize;
             m_blocks.push_back(newBlock);
         }
@@ -354,7 +352,10 @@ namespace rtxmu
                         suballocatorBlock->freeSubBlocks.erase(freeSubBlockIter);
                         suballocatorBlock->numSubBlocks++;
 
-                        Logger::logDebug("RTXMU Suballocator Perfect Match\n");
+                        if (Logger::isEnabled(Level::DBG))
+                        {
+                            Logger::log(Level::DBG, "RTXMU Suballocator Perfect Match\n");
+                        }
 
                         break;
                     }
@@ -396,7 +397,10 @@ namespace rtxmu
                 subBlock->unusedSize = subBlock->size - sizeInBytes;
                 m_stats.alignmentSavings += (newMemoryAlignedSize - sizeInBytes);
 
-                Logger::logDebug("RTXMU Suballocator Suboptimal Match with wasted memory\n");
+                if (Logger::isEnabled(Level::DBG))
+                {
+                    Logger::log(Level::DBG, "RTXMU Suballocator Suboptimal Match with wasted memory\n");
+                }
             }
 
 #if MERGE_FREE_BLOCKS
@@ -418,7 +422,10 @@ namespace rtxmu
                         freeBlocks[neighboringSubBlock + 1].offset = -1;
                         freeBlocks[neighboringSubBlock + 1].size = 0;
 
-                        Logger::logDebug("RTXMU Suballocator Merging Free Blocks\n");
+                        if (Logger::isEnabled(Level::DBG))
+                        {
+                            Logger::log(Level::DBG, "RTXMU Suballocator Merging Free Blocks\n");
+                        }
                     }
                     else
                     {
@@ -453,7 +460,6 @@ namespace rtxmu
         uint64_t                m_allocationAlignment;
         std::vector<BlockDesc*> m_blocks;
         Stats                   m_stats;
-        AllocatorType*          m_allocator;
         std::mutex              m_threadSafeLock;
     };
 
